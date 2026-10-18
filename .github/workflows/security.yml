@@ -1,0 +1,59 @@
+name: Reusable security analysis
+
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: CodeQL languages as JSON array
+        required: false
+        type: string
+        default: '["python", "javascript-typescript"]'
+      dependency-severity:
+        description: moderate, high, or critical
+        required: false
+        type: string
+        default: high
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJSON(inputs.languages) }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: github/codeql-action/init@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+      - uses: github/codeql-action/analyze@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+        with:
+          category: /language:${{ matrix.language }}
+
+  dependencies:
+    name: New dependency risk
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
+        with:
+          fail-on-severity: ${{ inputs.dependency-severity }}

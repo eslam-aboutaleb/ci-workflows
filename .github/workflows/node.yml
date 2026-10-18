@@ -1,0 +1,118 @@
+name: Reusable Node CI
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        required: true
+        type: string
+      manager:
+        description: npm or pnpm
+        required: true
+        type: string
+      node-versions:
+        description: JSON array of supported Node versions
+        required: false
+        type: string
+        default: '["22"]'
+      pnpm-version:
+        description: Optional pnpm version; leave empty to use packageManager in the caller package.json
+        required: false
+        type: string
+        default: ''
+      typecheck-script:
+        description: Existing package.json script; empty disables type checking
+        required: false
+        type: string
+        default: typecheck
+      run-tests:
+        required: false
+        type: boolean
+        default: true
+      audit-level:
+        description: 'none, moderate, high, or critical; use none when tracked baseline advisories prevent a useful gate'
+        required: false
+        type: string
+        default: high
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Node ${{ matrix.node }} quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ${{ fromJSON(inputs.node-versions) }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.project-dir }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        if: inputs.manager == 'pnpm'
+        with:
+          version: ${{ inputs.pnpm-version }}
+          package_json_file: ${{ inputs.project-dir }}/package.json
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: ${{ inputs.manager }}
+          cache-dependency-path: ${{ inputs.project-dir }}/${{ inputs.manager == 'npm' && 'package-lock.json' || 'pnpm-lock.yaml' }}
+      - name: Validate inputs, lockfile, and scripts
+        env:
+          MANAGER: ${{ inputs.manager }}
+          TYPECHECK: ${{ inputs.typecheck-script }}
+          AUDIT_LEVEL: ${{ inputs.audit-level }}
+          RUN_TESTS: ${{ inputs.run-tests }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MANAGER" == npm || "$MANAGER" == pnpm ]]
+          [[ "$TYPECHECK" =~ ^[a-zA-Z0-9:_-]*$ ]]
+          [[ "$AUDIT_LEVEL" =~ ^(none|moderate|high|critical)$ ]]
+          node - <<'JS'
+          const fs = require('node:fs');
+          const p = JSON.parse(fs.readFileSync('package.json'));
+          for (const name of ['lint', 'build', ...(process.env.TYPECHECK ? [process.env.TYPECHECK] : []), ...(process.env.RUN_TESTS === 'true' ? ['test'] : [])]) {
+            if (!p.scripts?.[name]) throw new Error(`Required package script missing: ${name}`);
+          }
+          JS
+          if [[ "$MANAGER" == npm ]]; then test -f package-lock.json; else test -f pnpm-lock.yaml; fi
+      - name: Frozen install
+        env:
+          MANAGER: ${{ inputs.manager }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$MANAGER" == npm ]]; then npm ci; else pnpm install --frozen-lockfile; fi
+      - name: Dependency audit
+        env:
+          MANAGER: ${{ inputs.manager }}
+          AUDIT_LEVEL: ${{ inputs.audit-level }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$AUDIT_LEVEL" == none ]]; then exit 0; fi
+          if [[ "$MANAGER" == npm ]]; then npm audit --audit-level="$AUDIT_LEVEL"; else pnpm audit --audit-level "$AUDIT_LEVEL"; fi
+      - name: Lint, typecheck, tests, build
+        env:
+          MANAGER: ${{ inputs.manager }}
+          TYPECHECK: ${{ inputs.typecheck-script }}
+          RUN_TESTS: ${{ inputs.run-tests }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner=(npm run)
+          if [[ "$MANAGER" == pnpm ]]; then runner=(pnpm run); fi
+          "${runner[@]}" lint
+          if [[ -n "$TYPECHECK" ]]; then "${runner[@]}" "$TYPECHECK"; fi
+          if [[ "$RUN_TESTS" == true ]]; then "${runner[@]}" test; fi
+          "${runner[@]}" build

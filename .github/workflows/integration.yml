@@ -1,0 +1,88 @@
+name: Reusable service integration CI
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Root-relative directory containing the integration Makefile
+        required: true
+        type: string
+      python-version:
+        required: false
+        type: string
+        default: '3.12'
+      install-uv:
+        required: false
+        type: boolean
+        default: true
+      postgres-image:
+        description: PostgreSQL-compatible service image, optionally pinned by digest
+        required: false
+        type: string
+        default: postgres:16
+      redis-image:
+        description: Redis service image; empty disables Redis
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    name: Service integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_USER: ci_test
+          POSTGRES_PASSWORD: ci_test_only
+          POSTGRES_DB: ci_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_test -d ci_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: ${{ inputs.redis-image }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CI: 'true'
+      CI_POSTGRES_URL: postgresql://ci_test:ci_test_only@127.0.0.1:5432/ci_test
+      CI_REDIS_URL: ${{ inputs.redis-image != '' && 'redis://127.0.0.1:6379/0' || '' }}
+    defaults:
+      run:
+        working-directory: ${{ inputs.project-dir }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        if: inputs.install-uv
+      - name: Check integration contract
+        run: |
+          make -n ci-install
+          make -n ci-migrate
+          make -n ci-integration
+      - name: Install dependencies
+        run: make ci-install
+      - name: Migrate test database
+        run: make ci-migrate
+      - name: Run integration contract
+        run: make ci-integration
