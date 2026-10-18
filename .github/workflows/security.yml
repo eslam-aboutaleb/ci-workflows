@@ -1,4 +1,4 @@
-name: Reusable security analysis
+name: Security analysis
 
 on:
   workflow_call:
@@ -9,10 +9,18 @@ on:
         type: string
         default: '["python", "javascript-typescript"]'
       dependency-severity:
-        description: moderate, high, or critical
+        description: low, moderate, high, or critical
         required: false
         type: string
         default: high
+      config-file:
+        description: Optional CodeQL configuration file in the consuming repository
+        type: string
+        default: ''
+      build-command:
+        description: Optional shell command to prepare and build compiled languages for CodeQL
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -20,7 +28,8 @@ permissions:
 jobs:
   codeql:
     name: CodeQL ${{ matrix.language }}
-    runs-on: ubuntu-latest
+    if: inputs.languages != '[]'
+    runs-on: ${{ matrix.language == 'swift' && 'macos-latest' || 'ubuntu-latest' }}
     timeout-minutes: 50
     permissions:
       contents: read
@@ -31,14 +40,40 @@ jobs:
       matrix:
         language: ${{ fromJSON(inputs.languages) }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: github/codeql-action/init@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+      - name: Validate CodeQL inputs
+        env:
+          LANGUAGE: ${{ matrix.language }}
+          CONFIG_FILE: ${{ inputs.config-file }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          languages = {'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'}
+          if os.environ['LANGUAGE'] not in languages: raise SystemExit('Unsupported CodeQL language')
+          if os.environ['CONFIG_FILE']:
+              root = Path.cwd().resolve()
+              path = Path(os.environ['CONFIG_FILE'])
+              if path.is_absolute() or '..' in path.parts or not path.is_file() or not path.resolve().is_relative_to(root):
+                  raise SystemExit('config-file must be a file inside the consuming repository')
+          PY
+      - uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           languages: ${{ matrix.language }}
-          queries: security-extended
-      - uses: github/codeql-action/analyze@ce5e7eeac396d720fe2d802714996c8ce561e311 # v3
+          queries: +security-extended
+          config-file: ${{ inputs.config-file }}
+          build-mode: ${{ contains(fromJSON('["c-cpp","csharp","go","java-kotlin","swift"]'), matrix.language) && (inputs.build-command != '' && 'manual' || 'autobuild') || 'none' }}
+      - uses: github/codeql-action/autobuild@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        if: inputs.build-command == '' && contains(fromJSON('["c-cpp","csharp","go","java-kotlin","swift"]'), matrix.language)
+      - name: Build compiled language for analysis
+        if: inputs.build-command != '' && contains(fromJSON('["c-cpp","csharp","go","java-kotlin","swift"]'), matrix.language)
+        env:
+          BUILD_COMMAND: ${{ inputs.build-command }}
+        shell: bash
+        run: bash -euo pipefail -c "$BUILD_COMMAND"
+      - uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           category: /language:${{ matrix.language }}
 
@@ -51,9 +86,9 @@ jobs:
       contents: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/dependency-review-action@05fe4576374b728f0c523d6a13d64c25081e0803 # v4.8.3
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: ${{ inputs.dependency-severity }}

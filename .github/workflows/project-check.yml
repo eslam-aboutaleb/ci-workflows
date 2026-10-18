@@ -1,0 +1,108 @@
+name: Project contract
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Directory containing the project's Makefile
+        required: true
+        type: string
+      target:
+        description: Make target that performs the check after ci-install
+        required: true
+        type: string
+      check-drift:
+        description: Fail on tracked changes and new unignored files after generation
+        type: boolean
+        default: false
+      python-version:
+        type: string
+        default: '3.12'
+      node-version:
+        type: string
+        default: '22'
+      pnpm-version:
+        description: Exact pnpm version when needed by ci-install
+        type: string
+        default: ''
+      bun-version:
+        description: Exact Bun version when needed by ci-install
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ inputs.target }} (${{ inputs.project-dir }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    env:
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate project contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          project = Path(os.environ['PROJECT_DIR'])
+          if project.is_absolute() or '..' in project.parts or not (root / project).resolve().is_relative_to(root):
+              raise SystemExit('project-dir must stay inside the checked-out repository')
+          target = os.environ['TARGET']
+          if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', target) or target == 'ci-install':
+              raise SystemExit('target must be a check target, not ci-install or a make option')
+          text = (project / 'Makefile').read_text()
+          for name in ('ci-install', target):
+              if not re.search(rf'(?m)^{re.escape(name)}\s*:', text):
+                  raise SystemExit(f'Missing Makefile target: {name}')
+          PY
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: inputs.pnpm-version != ''
+        with:
+          version: ${{ inputs.pnpm-version }}
+          package_json_file: ${{ inputs.project-dir }}/package.json
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: inputs.bun-version != ''
+        with:
+          bun-version: ${{ inputs.bun-version }}
+      - name: Install project tooling and dependencies
+        working-directory: ${{ inputs.project-dir }}
+        run: make ci-install
+      - name: Run project check
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          TARGET: ${{ inputs.target }}
+        run: make -- "$TARGET"
+      - name: Check generated files for drift
+        if: inputs.check-drift
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code
+          git diff --cached --exit-code
+          if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+            echo '::error::Generation created untracked files. Commit generated outputs or ignore build outputs.'
+            git ls-files --others --exclude-standard
+            exit 1
+          fi

@@ -1,0 +1,290 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/eslam-aboutaleb/ci-workflows/main/.github/ci.schema.json",
+  "title": "Central CI configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "const": 1
+    },
+    "python": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+            },
+            "uniqueItems": true
+          },
+          "python-versions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^3\\.\\d+$"
+            }
+          },
+          "operating-systems": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "ubuntu-latest",
+                "windows-latest",
+                "macos-latest"
+              ]
+            }
+          },
+          "pip-extras": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_,.-]*$"
+          },
+          "pip-constraints": {
+            "type": "string"
+          },
+          "test-path": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+          },
+          "coverage-source": {
+            "type": "string"
+          },
+          "coverage-min": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "build-distribution": {
+            "type": "boolean"
+          },
+          "publish-pypi": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "node": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+            },
+            "uniqueItems": true
+          },
+          "node-versions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^\\d+(?:\\.\\d+){0,2}$"
+            }
+          },
+          "operating-systems": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "ubuntu-latest",
+                "windows-latest",
+                "macos-latest"
+              ]
+            }
+          },
+          "test-shards": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          },
+          "pnpm-version": {
+            "type": "string"
+          },
+          "bun-version": {
+            "type": "string"
+          },
+          "audit-level": {
+            "enum": [
+              "moderate",
+              "high",
+              "critical"
+            ]
+          }
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+            },
+            "uniqueItems": true
+          },
+          "node-version": {
+            "type": "string"
+          },
+          "pnpm-version": {
+            "type": "string"
+          },
+          "bun-version": {
+            "type": "string"
+          },
+          "test-script": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_][A-Za-z0-9:_-]*$"
+          },
+          "shards": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 16
+          },
+          "browsers": {
+            "type": "string",
+            "pattern": "^(chromium|firefox|webkit)( (chromium|firefox|webkit))*$"
+          }
+        }
+      }
+    },
+    "docker": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+            },
+            "uniqueItems": true
+          },
+          "build-context": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+          },
+          "platforms": {
+            "type": "string",
+            "pattern": "^linux/(amd64|arm64|arm/v7)(,linux/(amd64|arm64|arm/v7))*$"
+          },
+          "target": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]*$"
+          },
+          "build-args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*=[^\\r\\n]*$"
+            }
+          }
+        }
+      }
+    },
+    "contracts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+            },
+            "uniqueItems": true
+          },
+          "project-dir": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+          },
+          "kind": {
+            "enum": [
+              "quality",
+              "docs",
+              "generated"
+            ]
+          },
+          "target": {
+            "type": "string",
+            "pattern": "^ci-[A-Za-z0-9_][A-Za-z0-9_.-]*$"
+          },
+          "python-version": {
+            "type": "string"
+          },
+          "node-version": {
+            "type": "string"
+          },
+          "pnpm-version": {
+            "type": "string"
+          },
+          "bun-version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "config-file": {
+          "type": "string",
+          "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\r\\n]+$"
+        },
+        "build-command": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "required": [
+    "version"
+  ]
+}

@@ -1,4 +1,4 @@
-name: Reusable Playwright CI
+name: Playwright CI
 
 on:
   workflow_call:
@@ -7,67 +7,159 @@ on:
         required: true
         type: string
       manager:
-        description: npm or pnpm
+        description: npm, pnpm, or bun
         required: true
         type: string
       node-version:
-        required: false
         type: string
         default: '22'
       pnpm-version:
-        description: Optional pnpm version; leave empty to use packageManager in the caller package.json
-        required: false
+        type: string
+        default: ''
+      bun-version:
+        description: Exact Bun version; otherwise use packageManager
         type: string
         default: ''
       test-script:
-        description: Existing Playwright script; default test:e2e
-        required: false
+        description: Project-owned Playwright or visual regression script
         type: string
         default: test:e2e
+      browsers:
+        description: Space-separated Playwright browser binaries to install
+        type: string
+        default: chromium
+      shards:
+        description: Number of Playwright shards; scripts must accept --shard when greater than one
+        type: number
+        default: 1
 
 permissions:
   contents: read
 
 jobs:
+  validate:
+    name: Validate browser contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      shards: ${{ steps.contract.outputs.shards }}
+      artifact-key: ${{ steps.contract.outputs.artifact-key }}
+      bun-version: ${{ steps.contract.outputs.bun-version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          MANAGER: ${{ inputs.manager }}
+          TEST_SCRIPT: ${{ inputs.test-script }}
+          BROWSERS: ${{ inputs.browsers }}
+          SHARDS: ${{ inputs.shards }}
+          BUN_VERSION: ${{ inputs.bun-version }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          project = Path(os.environ['PROJECT_DIR'])
+          if project.is_absolute() or '..' in project.parts or not (root / project).resolve().is_relative_to(root):
+              raise SystemExit('project-dir must be inside the repository')
+          script = os.environ['TEST_SCRIPT']
+          if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9:_-]*', script): raise SystemExit('Invalid test-script')
+          browsers = os.environ['BROWSERS'].split()
+          if not browsers or any(b not in {'chromium', 'firefox', 'webkit'} for b in browsers): raise SystemExit('Invalid browsers')
+          shards = int(os.environ['SHARDS'])
+          if not 1 <= shards <= 16: raise SystemExit('shards must be between 1 and 16')
+          locks = {'npm': ['package-lock.json'], 'pnpm': ['pnpm-lock.yaml'], 'bun': ['bun.lock', 'bun.lockb']}
+          manager = os.environ['MANAGER']
+          if manager not in locks or not any((project / p).is_file() for p in locks[manager]): raise SystemExit('A supported package manager and local lockfile are required')
+          package = json.loads((project / 'package.json').read_text())
+          if not package.get('scripts', {}).get(script): raise SystemExit(f'Missing script: {script}')
+          dependencies = {**package.get('dependencies', {}), **package.get('devDependencies', {}), **package.get('optionalDependencies', {})}
+          if not ({'playwright', '@playwright/test'} & dependencies.keys()): raise SystemExit('Declare Playwright in package.json')
+          bun = os.environ['BUN_VERSION'] or package.get('packageManager', '').removeprefix('bun@').split('+')[0]
+          if manager == 'bun' and not re.fullmatch(r'\d+\.\d+\.\d+', bun): raise SystemExit('Pin an exact Bun version')
+          key = hashlib.sha256(f'{project}:{script}'.encode()).hexdigest()[:16]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'shards={json.dumps(list(range(1, shards + 1)))}\n')
+              output.write(f'artifact-key={key}\n')
+              output.write(f'bun-version={bun if manager == "bun" else ""}\n')
+          PY
+
   playwright:
-    name: Browser regression
+    name: Browser regression / shard ${{ matrix.shard }}
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.validate.outputs.shards) }}
     defaults:
       run:
         working-directory: ${{ inputs.project-dir }}
+        shell: bash
+    env:
+      CI: 'true'
+      PLAYWRIGHT_HTML_OPEN: never
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: inputs.manager == 'pnpm'
         with:
           version: ${{ inputs.pnpm-version }}
           package_json_file: ${{ inputs.project-dir }}/package.json
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ inputs.node-version }}
-      - name: Install and run Playwright
+          cache: ${{ inputs.manager != 'bun' && inputs.manager || '' }}
+          package-manager-cache: false
+          cache-dependency-path: ${{ inputs.project-dir }}/${{ inputs.manager == 'npm' && 'package-lock.json' || 'pnpm-lock.yaml' }}
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: inputs.manager == 'bun'
+        with:
+          bun-version: ${{ needs.validate.outputs.bun-version }}
+      - name: Frozen install and browser dependencies
+        env:
+          MANAGER: ${{ inputs.manager }}
+          BROWSERS: ${{ inputs.browsers }}
+        run: |
+          set -euo pipefail
+          case "$MANAGER" in
+            npm) npm ci ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            bun) bun install --frozen-lockfile ;;
+          esac
+          read -r -a engines <<< "$BROWSERS"
+          ./node_modules/.bin/playwright install --with-deps "${engines[@]}"
+      - name: Run browser or visual regression checks
         env:
           MANAGER: ${{ inputs.manager }}
           TEST_SCRIPT: ${{ inputs.test-script }}
-        shell: bash
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ inputs.shards }}
         run: |
           set -euo pipefail
-          [[ "$TEST_SCRIPT" =~ ^[a-zA-Z0-9:_-]+$ ]]
-          node -e 'const p=require("./package.json"); if (!p.scripts?.[process.env.TEST_SCRIPT]) process.exit(2)'
-          case "$MANAGER" in
-            npm) npm ci; npx playwright install --with-deps chromium; npm run "$TEST_SCRIPT" ;;
-            pnpm) pnpm install --frozen-lockfile; pnpm exec playwright install --with-deps chromium; pnpm run "$TEST_SCRIPT" ;;
-            *) exit 2 ;;
-          esac
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+          args=()
+          if (( SHARDS > 1 )); then
+            if [[ "$MANAGER" == npm ]]; then args+=(--); fi
+            args+=("--shard=$SHARD/$SHARDS")
+          fi
+          "$MANAGER" run "$TEST_SCRIPT" "${args[@]}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
-          name: playwright-report
-          path: ${{ inputs.project-dir }}/playwright-report/
+          name: playwright-${{ needs.validate.outputs.artifact-key }}-shard-${{ matrix.shard }}
+          path: |
+            ${{ inputs.project-dir }}/playwright-report/
+            ${{ inputs.project-dir }}/test-results/
+            ${{ inputs.project-dir }}/blob-report/
           if-no-files-found: ignore
           retention-days: 7

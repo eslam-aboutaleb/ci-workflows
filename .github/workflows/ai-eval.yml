@@ -1,0 +1,65 @@
+name: AI evaluations
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Directory containing the evaluation Makefile, relative to repository root
+        required: true
+        type: string
+      target:
+        description: Make target that installs and runs the project's AI evaluations
+        required: false
+        type: string
+        default: ci-eval
+    secrets:
+      ai-eval-api-key:
+        description: Optional provider key exposed to the evaluation target as AI_EVAL_API_KEY
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    name: AI evaluation suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CI: 'true'
+    defaults:
+      run:
+        working-directory: ${{ inputs.project-dir }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate evaluation contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT_DIR" == . || ( "$PROJECT_DIR" =~ ^[A-Za-z0-9_./-]+$ && "$PROJECT_DIR" != /* && "/$PROJECT_DIR/" != *"/../"* ) ]]
+          [[ "$TARGET" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]
+          test -f Makefile
+          make -n -- "$TARGET" > /dev/null
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+      - name: Run AI evaluations
+        env:
+          AI_EVAL_API_KEY: ${{ secrets.ai-eval-api-key }}
+          TARGET: ${{ inputs.target }}
+        shell: bash
+        run: make -- "$TARGET"

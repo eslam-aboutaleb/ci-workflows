@@ -1,0 +1,70 @@
+{
+  "$schema": "https://raw.githubusercontent.com/eslam-aboutaleb/ci-workflows/main/.github/ci.schema.json",
+  "version": 1,
+  "python": {
+    "backend": {
+      "python-versions": [
+        "3.12",
+        "3.13"
+      ],
+      "coverage-source": "app",
+      "coverage-min": 85,
+      "pip-extras": "test",
+      "build-distribution": false,
+      "paths": [
+        "backend/**",
+        "shared/**"
+      ]
+    }
+  },
+  "node": {
+    "frontend": {
+      "node-versions": [
+        "22",
+        "24"
+      ],
+      "operating-systems": [
+        "ubuntu-latest"
+      ],
+      "paths": [
+        "frontend/**",
+        "shared/**"
+      ]
+    }
+  },
+  "browser": {
+    "frontend": {
+      "test-script": "test:e2e",
+      "browsers": "chromium firefox",
+      "shards": 2,
+      "paths": [
+        "frontend/**",
+        "shared/**"
+      ]
+    }
+  },
+  "docker": {
+    "backend/Dockerfile": {
+      "build-context": "backend",
+      "platforms": "linux/amd64,linux/arm64"
+    },
+    "frontend/Dockerfile": {
+      "build-context": "frontend"
+    }
+  },
+  "contracts": [
+    {
+      "kind": "docs",
+      "project-dir": "docs",
+      "target": "ci-docs",
+      "paths": [
+        "docs/**"
+      ]
+    },
+    {
+      "kind": "generated",
+      "project-dir": ".",
+      "target": "ci-generated"
+    }
+  ]
+}
