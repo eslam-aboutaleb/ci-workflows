@@ -23,6 +23,6 @@ jobs:
       actions: read
       security-events: write
       pull-requests: read
-      id-token: write
     secrets:
       AI_EVAL_API_KEY: ${{ secrets.AI_EVAL_API_KEY }}
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}

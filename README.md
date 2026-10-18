@@ -26,12 +26,12 @@ jobs:
       actions: read
       security-events: write
       pull-requests: read
-      id-token: write
     secrets:
       AI_EVAL_API_KEY: ${{ secrets.AI_EVAL_API_KEY }}
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
 ```
 
-The provider key is optional. It is forwarded only to AI evaluations on default-branch pushes and manual runs against the default branch. Pull requests receive no provider key or publishing credentials. The aggregate caller needs the permissions shown because nested security and optional PyPI jobs declare those scopes; individual jobs narrow their token permissions. Container publishing is a separate opt-in call with `packages: write`.
+Both keys are optional unless the matching feature is enabled. The PyPI token is required for enabled release publication. The provider key is optional. It is forwarded only to AI evaluations on default-branch pushes and manual runs against the default branch. Pull requests receive no provider key or publishing credentials. The aggregate caller needs the permissions shown because nested security and optional PyPI jobs declare those scopes; individual jobs narrow their token permissions. Container publishing is a separate opt-in call with `packages: write`.
 
 After the first run, require the emitted **quality / Quality gate** check in your branch ruleset; use the exact name shown in GitHub. Enable required reviews, require code owner review of workflow and CI configuration changes, and include `merge_group` in callers that use a merge queue. Configure a code scanning ruleset to block the vulnerability severities you consider unacceptable: a successful CodeQL upload alone does not mean there are no findings.
 
@@ -132,7 +132,7 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 | [security.yml](.github/workflows/security.yml) | None | CodeQL, compiled-language builds, optional caller-owned configuration, dependency review on PRs |
 | [workflow-lint.yml](.github/workflows/workflow-lint.yml) | None | Actionlint against the consuming repository's workflows |
 | [publish-docker.yml](.github/workflows/publish-docker.yml) | `image` | Event validation, image build validation, approved GHCR publication, provenance, SBOM and digest output |
-| [publish-pypi.yml](.github/workflows/publish-pypi.yml) | `project-dir`, `distribution-name` | Match release tag to package metadata, build/check distributions, approved OIDC publication |
+| [publish-pypi.yml](.github/workflows/publish-pypi.yml) | `project-dir`, `distribution-name` | Match release tag to package metadata, build/check distributions, approved publication using `PYPI_API_TOKEN` |
 | [validate.yml](.github/workflows/validate.yml) | Repository maintenance only | Actionlint, shared contract checks, discovery and gate regression tests |
 
 Python uv projects must lock Ruff, pytest and pytest-cov when coverage is enabled. pip projects use an editable install; install test extras or provide a constraints file as appropriate. Node projects must define noninteractive `lint`, `typecheck`, `test`, and `build` scripts. Audits fail at `high` by default; use `moderate` for a stricter threshold. Bun must have an exact runtime version in `packageManager: bun@<version>` or `bun-version`. pnpm uses `packageManager` or an explicit `pnpm-version`.
@@ -197,7 +197,7 @@ CodeQL keeps the `security-extended` suite. Its optional `config-file` is resolv
 
 Verification and publishing have separate permissions and environments. Configure required reviewers and deployment branch/tag restrictions before enabling a `pypi` or `containers` environment. Creating an environment in YAML does not configure its protection rules.
 
-To enable aggregate PyPI publication, set `"publish-pypi": true` for the intended Python project and include `release: types: [published]` in the caller. Final releases publish only after Quality gate passes, and only if the tag is exactly `v<project.version>`. Configure PyPI Trusted Publishing for the caller/called workflow and the `pypi` environment. No API token is used. In monorepos, enable only packages intended to share that release tag, or use separate direct publication jobs.
+To enable aggregate PyPI publication, set `"publish-pypi": true` for the intended Python project and include `release: types: [published]` in the caller. Final releases publish only after Quality gate passes, and only if the tag is exactly `v<project.version>`. Store a PyPI API token authorized for the target distribution as the consuming repository's `PYPI_API_TOKEN` Actions secret, pass it explicitly to the workflow, and configure required reviewers on the `pypi` environment. The token reaches only the approved upload job. PyPI OIDC publication requires an upload job in the consuming repository's own workflow; it is not supported from a called workflow. Token publication does not generate PyPI attestations. In monorepos, enable only packages intended to share that release tag, or use separate direct publication jobs.
 
 Container publication is an explicit separate job after the aggregate caller completes successfully:
 
