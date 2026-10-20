@@ -1,0 +1,531 @@
+name: Project quality
+
+on:
+  workflow_call:
+    inputs:
+      config-file:
+        description: Optional CI configuration file in the consuming repository
+        type: string
+        default: .github/ci.json
+      changes-only:
+        description: On pull requests, filter only projects with explicit paths configured
+        type: boolean
+        default: false
+    secrets:
+      PYPI_API_TOKEN:
+        description: Optional PyPI token required when a project enables release publication
+        required: false
+      AI_EVAL_API_KEY:
+        description: Optional provider key for trusted default-branch AI evaluations
+        required: false
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: central-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != format('refs/heads/{0}', github.event.repository.default_branch) }}
+
+jobs:
+  discover:
+    name: Discover project checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      python-projects: ${{ steps.scan.outputs.python-projects }}
+      node-projects: ${{ steps.scan.outputs.node-projects }}
+      playwright-projects: ${{ steps.scan.outputs.playwright-projects }}
+      dockerfiles: ${{ steps.scan.outputs.dockerfiles }}
+      project-checks: ${{ steps.scan.outputs.project-checks }}
+      integration-projects: ${{ steps.scan.outputs.integration-projects }}
+      ai-evaluation-projects: ${{ steps.scan.outputs.ai-evaluation-projects }}
+      codeql-languages: ${{ steps.scan.outputs.codeql-languages }}
+      security-options: ${{ steps.scan.outputs.security-options }}
+      workflow-files: ${{ steps.scan.outputs.workflow-files }}
+      pypi-projects: ${{ steps.scan.outputs.pypi-projects }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+      - name: Install workspace manifest parser
+        run: python -m pip install 'PyYAML==6.0.2'
+      - id: scan
+        name: Validate configuration and discover qualification checks
+        env:
+          CONFIG_FILE: ${{ inputs.config-file || '.github/ci.json' }}
+          CHANGES_ONLY: ${{ inputs.changes-only || false }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import fnmatch
+          import json
+          import os
+          import re
+          import subprocess
+          import tomllib
+          import yaml
+          from pathlib import Path
+          
+          root = Path.cwd().resolve()
+          excluded = {'.git', '.venv', 'venv', 'node_modules', 'dist', 'build', '__pycache__', '.next', '.turbo', 'vendor', 'coverage'}
+          entries = []
+          for directory, names, filenames in os.walk('.'):
+              names[:] = sorted(n for n in names if n not in excluded and not (Path(directory) / n).is_symlink())
+              entries.extend(Path(directory) / name for name in sorted(filenames))
+          
+          def require(condition, message):
+              if not condition:
+                  raise SystemExit(message)
+          
+          def local(value, directory=False, file=False):
+              require(isinstance(value, str) and value and '\n' not in value and '\r' not in value, 'Paths must be non-empty single-line strings')
+              path = Path(value)
+              require(not path.is_absolute() and '..' not in path.parts and path.resolve().is_relative_to(root), f'Path escapes the repository: {value}')
+              if directory:
+                  require(path.is_dir(), f'Missing project directory: {value}')
+              if file:
+                  require(path.is_file() and not path.is_symlink(), f'Missing or symlinked file: {value}')
+              return path.as_posix()
+          
+          def unique_json(pairs):
+              result = {}
+              for key, value in pairs:
+                  require(key not in result, f'Duplicate JSON key: {key}')
+                  result[key] = value
+              return result
+          
+          config_path = Path(local(os.environ.get('CONFIG_FILE', '.github/ci.json')))
+          config = json.loads(config_path.read_text(), object_pairs_hook=unique_json) if config_path.exists() else {'version': 1}
+          require(isinstance(config, dict) and type(config.get('version')) is int and config['version'] == 1, 'CI configuration must be an object with version: 1')
+          require(not (set(config) - {'$schema', 'version', 'python', 'node', 'browser', 'docker', 'contracts', 'security'}), 'Unknown CI configuration section')
+          for section in ('python', 'node', 'browser', 'docker', 'security'):
+              require(isinstance(config.get(section, {}), dict), f'{section} configuration must be an object')
+          require(isinstance(config.get('contracts', []), list), 'contracts must be an array')
+          require(isinstance(config.get('$schema', ''), str), '$schema must be a string')
+          
+          systems = ['ubuntu-latest', 'windows-latest', 'macos-latest']
+          def options(section, path, defaults):
+              values = config.get(section, {}).get(path, {})
+              require(isinstance(values, dict), f'{section}.{path} must be an object')
+              require(not (set(values) - set(defaults) - {'paths'}), f'Unknown option in {section}.{path}')
+              result = {**defaults, **values}
+              for key, default in defaults.items():
+                  value = result[key]
+                  if isinstance(default, (int, float)) and not isinstance(default, bool):
+                      require(type(value) in (int, float), f'{section}.{path}.{key} must be numeric')
+                  else:
+                      require(type(value) is type(default), f'Invalid type for {section}.{path}.{key}')
+                  if isinstance(value, str):
+                      require('\n' not in value and '\r' not in value, f'{key} must be a single-line string')
+              for key in ('python-versions', 'node-versions', 'operating-systems'):
+                  if key in result:
+                      array = result[key]
+                      require(array and all(isinstance(v, str) for v in array), f'{key} must contain strings')
+                      require(len(array) == len(set(array)), f'Duplicate values in {key}')
+                      if key == 'operating-systems':
+                          require(all(v in systems for v in array), 'Only GitHub hosted OS labels are supported')
+                      else:
+                          pattern = r'3\.\d+' if key == 'python-versions' else r'\d+(?:\.\d+){0,2}'
+                          require(all(re.fullmatch(pattern, v) for v in array), f'Invalid {key}')
+              for key in ('shards', 'test-shards'):
+                  if key in result:
+                      require(type(result[key]) is int and 1 <= result[key] <= 16, f'{key} must be an integer from 1 to 16')
+              paths = result.get('paths', [])
+              require(isinstance(paths, list) and all(isinstance(p, str) and p and not p.startswith('/') and '..' not in Path(p).parts for p in paths), 'paths must contain repository-relative glob patterns')
+              return result
+          
+          changed_files = None
+          if os.environ.get('CHANGES_ONLY') == 'true' and os.environ.get('EVENT_NAME') == 'pull_request':
+              base = os.environ.get('BASE_SHA', '')
+              if re.fullmatch(r'[0-9a-f]{40}', base):
+                  result = subprocess.run(['git', 'diff', '--name-only', '--no-renames', '-z', base, 'HEAD'], capture_output=True, text=True)
+                  if result.returncode == 0:
+                      changed_files = [p for p in result.stdout.split('\0') if p]
+                      # Configuration, workflow, and root dependency changes invalidate every project.
+                      if any(p.startswith('.github/') or '/' not in p for p in changed_files):
+                          changed_files = None
+          
+          def selected(entry):
+              patterns = entry.pop('paths', [])
+              return changed_files is None or not patterns or any(fnmatch.fnmatchcase(path, pattern) for path in changed_files for pattern in patterns)
+          
+          def package_json(path):
+              local(path.as_posix(), file=True)
+              value = json.loads(path.read_text(), object_pairs_hook=unique_json)
+              require(isinstance(value, dict) and isinstance(value.get('scripts', {}), dict), f'Invalid package manifest: {path}')
+              return value
+          
+          def manager_at(directory):
+              locks = {'pnpm': ['pnpm-lock.yaml'], 'npm': ['package-lock.json'], 'bun': ['bun.lock', 'bun.lockb']}
+              matches = [manager for manager, names in locks.items() if any((directory / name).is_file() for name in names)]
+              require(len(matches) <= 1, f'Conflicting package manager lockfiles: {directory}')
+              return matches[0] if matches else None
+          
+          python_projects, node_projects, browser_projects, dockerfiles, project_checks, pypi_projects = [], [], [], [], [], []
+          seen = {name: set() for name in ('python', 'node', 'browser', 'docker')}
+          quality_contracts = []
+          contract_configs = {}
+          for item in config.get('contracts', []):
+              require(isinstance(item, dict) and item.get('kind') in {'quality', 'docs', 'generated'}, 'Each contract needs a kind: quality, docs, or generated')
+              allowed = {'kind', 'project-dir', 'target', 'paths', 'python-version', 'node-version', 'pnpm-version', 'bun-version'}
+              require(not (set(item) - allowed), 'Unknown contract option')
+              directory = local(item.get('project-dir', '.'), directory=True)
+              target = item.get('target', {'quality': 'ci-quality', 'docs': 'ci-docs', 'generated': 'ci-generated'}[item['kind']])
+              require(isinstance(target, str) and bool(re.fullmatch(r'ci-[A-Za-z0-9_][A-Za-z0-9_.-]*', target)) and target != 'ci-install', 'Contract targets must start with ci-')
+              key = (directory, target)
+              require(key not in contract_configs, f'Duplicate contract: {key}')
+              contract_configs[key] = item
+          
+          for makefile in (p for p in entries if p.name == 'Makefile'):
+              local(makefile.as_posix(), file=True)
+              directory = makefile.parent.as_posix()
+              content = makefile.read_text()
+              automatic = {'ci-quality': 'quality', 'ci-docs': 'docs', 'ci-docs-links': 'docs', 'ci-generated': 'generated'}
+              targets = {target: kind for target, kind in automatic.items() if re.search(rf'(?m)^{target}\s*:', content)}
+              targets.update({target: item['kind'] for (project, target), item in contract_configs.items() if project == directory})
+              for target, kind in sorted(targets.items()):
+                  for required in ('ci-install', target):
+                      require(bool(re.search(rf'(?m)^{re.escape(required)}\s*:', content)), f'{makefile} must define {required}')
+                  item = contract_configs.pop((directory, target), {})
+                  entry = {'project_dir': directory, 'target': target, 'check_drift': kind == 'generated', 'python_version': '3.12', 'node_version': '22', 'pnpm_version': '', 'bun_version': '', 'paths': item.get('paths', [])}
+                  for key in ('python-version', 'node-version', 'pnpm-version', 'bun-version'):
+                      if key in item:
+                          require(isinstance(item[key], str) and bool(re.fullmatch(r'\d+(?:\.\d+){0,2}', item[key])), f'Invalid contract {key}')
+                          entry[key.replace('-', '_')] = item[key]
+                  require(isinstance(entry['paths'], list) and all(isinstance(p, str) and p for p in entry['paths']), 'Contract paths must be glob strings')
+                  if kind == 'quality': quality_contracts.append(Path(directory))
+                  project_checks.append(entry)
+          require(not contract_configs, f'Configured contracts have no Makefile: {list(contract_configs)}')
+          
+          for manifest in (p for p in entries if p.name == 'pyproject.toml'):
+              local(manifest.as_posix(), file=True)
+              metadata = tomllib.loads(manifest.read_text())
+              directory = manifest.parent.as_posix()
+              seen['python'].add(directory)
+              values = options('python', directory, {'python-versions': ['3.12'], 'operating-systems': ['ubuntu-latest'], 'pip-extras': '', 'pip-constraints': '', 'test-path': 'tests', 'coverage-source': '', 'coverage-min': 0, 'build-distribution': bool(metadata.get('build-system')), 'publish-pypi': False})
+              require(0 <= values['coverage-min'] <= 100 and bool(values['coverage-source']) == (values['coverage-min'] > 0), 'Set both coverage-source and coverage-min > 0, or leave both disabled')
+              for key in ('test-path', 'pip-constraints'):
+                  if values[key]: local((manifest.parent / values[key]).as_posix())
+              if values['coverage-source']: local((manifest.parent / values['coverage-source']).as_posix())
+              entry = {'project_dir': directory, 'manager': 'uv' if (manifest.parent / 'uv.lock').is_file() else 'pip', **{key.replace('-', '_'): value for key, value in values.items() if key != 'publish-pypi'}}
+              if values['publish-pypi']:
+                  require(bool(metadata.get('project', {}).get('name')), f'{manifest} needs project.name to publish')
+                  pypi_projects.append({'project_dir': directory, 'distribution_name': metadata['project']['name']})
+              python_projects.append(entry)
+          
+          packages = {p.parent: package_json(p) for p in entries if p.name == 'package.json'}
+          workspace_members = []
+          for directory, package in sorted(packages.items()):
+              manager = manager_at(directory)
+              if manager is None:
+                  workspace_owner = None
+                  for ancestor in directory.parents:
+                      if ancestor not in packages or not manager_at(ancestor): continue
+                      workspace = packages[ancestor].get('workspaces', [])
+                      if isinstance(workspace, dict): workspace = workspace.get('packages', [])
+                      patterns = workspace if isinstance(workspace, list) else []
+                      workspace_file = ancestor / 'pnpm-workspace.yaml'
+                      if workspace_file.is_file():
+                          workspace = yaml.safe_load(workspace_file.read_text())
+                          require(isinstance(workspace, dict) and isinstance(workspace.get('packages'), list), f'{workspace_file} must define packages')
+                          patterns = workspace['packages']
+                      require(all(isinstance(p, str) for p in patterns), f'Invalid workspace patterns in {ancestor}')
+                      member = directory.relative_to(ancestor).as_posix()
+                      included = any(fnmatch.fnmatchcase(member, p.rstrip('/')) for p in patterns if not p.startswith('!'))
+                      excluded_member = any(fnmatch.fnmatchcase(member, p[1:].rstrip('/')) for p in patterns if p.startswith('!'))
+                      if included and not excluded_member:
+                          workspace_owner = ancestor
+                          break
+                  if workspace_owner is not None:
+                      require(directory.as_posix() not in config.get('node', {}) and directory.as_posix() not in config.get('browser', {}), f'Configure the workspace root {workspace_owner}, not its member {directory}')
+                      workspace_members.append(f'{directory} -> {workspace_owner}')
+                      continue
+                  if any(directory.is_relative_to(project) for project in quality_contracts):
+                      workspace_members.append(f'{directory} -> ci-quality contract')
+                      continue
+                  require(False, f'{directory}/package.json needs a local npm, pnpm, or Bun lockfile; workspace members need an owning workspace root')
+              name = directory.as_posix()
+              seen['node'].add(name)
+              node_values = options('node', name, {'node-versions': ['22'], 'operating-systems': ['ubuntu-latest'], 'test-shards': 1, 'pnpm-version': '', 'bun-version': '', 'audit-level': 'high'})
+              node_projects.append({'project_dir': name, 'manager': manager, **{key.replace('-', '_'): value for key, value in node_values.items()}})
+              scripts = [script for script in ('test:e2e', 'test:visual', 'test:a11y') if package.get('scripts', {}).get(script)]
+              if name in config.get('browser', {}):
+                  scripts = [config['browser'][name].get('test-script', 'test:e2e')]
+              if scripts:
+                  seen['browser'].add(name)
+                  for script in scripts:
+                      values = options('browser', name, {'test-script': script, 'browsers': 'chromium', 'shards': 1, 'node-version': node_values['node-versions'][0], 'pnpm-version': node_values['pnpm-version'], 'bun-version': node_values['bun-version']})
+                      require(bool(package.get('scripts', {}).get(values['test-script'])), f'Unknown browser script: {name}/{values["test-script"]}')
+                      browser_projects.append({'project_dir': name, 'manager': manager, **{key.replace('-', '_'): value for key, value in values.items()}})
+          
+          for path in entries:
+              if path.name == 'Dockerfile' or path.name.startswith('Dockerfile.') or path.name.endswith('.Dockerfile'):
+                  local(path.as_posix(), file=True)
+                  name = path.as_posix()
+                  seen['docker'].add(name)
+                  values = options('docker', name, {'build-context': '.', 'platforms': 'linux/amd64', 'target': '', 'build-args': []})
+                  local(values['build-context'], directory=True)
+                  require(all(isinstance(arg, str) and bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=[^\r\n]*', arg)) for arg in values['build-args']), 'Docker build-args must be KEY=value strings without secrets')
+                  dockerfiles.append({'dockerfile': name, 'build_context': values['build-context'], 'platforms': values['platforms'], 'target': values['target'], 'build_args': '\n'.join(values['build-args']), 'paths': values.get('paths', [])})
+          
+          for section in ('python', 'node', 'browser', 'docker'):
+              unknown = set(config.get(section, {})) - seen[section]
+              require(not unknown, f'Configuration references undiscovered {section} projects: {sorted(unknown)}')
+          
+          # Require a project-owned quality contract for language ecosystems without a dedicated unit-test workflow.
+          for manifest in entries:
+              if manifest.name in {'go.mod', 'Cargo.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'Gemfile'} or manifest.suffix in {'.sln', '.csproj', '.fsproj'}:
+                  require(any(manifest.parent.is_relative_to(project) for project in quality_contracts), f'{manifest}: add a Makefile with ci-install and ci-quality to qualify this ecosystem')
+          
+          integration_projects, ai_projects = [], []
+          for makefile in (p for p in entries if p.name == 'Makefile'):
+              content = makefile.read_text()
+              if all(re.search(rf'(?m)^{target}\s*:', content) for target in ('ci-install', 'ci-migrate', 'ci-integration')):
+                  integration_projects.append({'project_dir': makefile.parent.as_posix()})
+              if re.search(r'(?m)^ci-eval\s*:', content):
+                  ai_projects.append({'project_dir': makefile.parent.as_posix()})
+          
+          suffixes = {'.py': 'python', '.js': 'javascript-typescript', '.jsx': 'javascript-typescript', '.ts': 'javascript-typescript', '.tsx': 'javascript-typescript', '.mjs': 'javascript-typescript', '.cjs': 'javascript-typescript', '.vue': 'javascript-typescript', '.go': 'go', '.java': 'java-kotlin', '.kt': 'java-kotlin', '.kts': 'java-kotlin', '.c': 'c-cpp', '.h': 'c-cpp', '.cc': 'c-cpp', '.cpp': 'c-cpp', '.hpp': 'c-cpp', '.hh': 'c-cpp', '.hxx': 'c-cpp', '.cs': 'csharp', '.rb': 'ruby', '.swift': 'swift', '.rs': 'rust'}
+          languages = sorted({suffixes[p.suffix] for p in entries if p.suffix in suffixes})
+          workflow_files = any(p.parent == Path('.github/workflows') and p.suffix in {'.yml', '.yaml'} for p in entries)
+          if workflow_files or any(p.name in {'action.yml', 'action.yaml'} for p in entries): languages.append('actions')
+          security = config.get('security', {})
+          require(not (set(security) - {'config-file', 'build-command'}), 'Unknown security configuration option')
+          require(all(isinstance(v, str) for v in security.values()), 'Security options must be strings')
+          if security.get('config-file'): local(security['config-file'], file=True)
+          
+          outputs = {'python-projects': python_projects, 'node-projects': node_projects, 'playwright-projects': browser_projects, 'dockerfiles': dockerfiles, 'project-checks': project_checks, 'integration-projects': integration_projects, 'ai-evaluation-projects': ai_projects}
+          lines = ['## Discovered quality checks', '', '| Check | Discovered | Selected |', '| --- | ---: | ---: |']
+          for name, values in list(outputs.items()):
+              total = len(values)
+              values = [entry for entry in values if selected(entry)]
+              require(len(values) <= 256, f'{name} exceeds the GitHub matrix limit of 256 entries')
+              outputs[name] = values
+              lines.append(f'| {name} | {total} | {len(values)} |')
+          if workspace_members: lines.extend(['', 'Workspace members are covered by their root CI scripts:', *[f'- {member}' for member in workspace_members]])
+          outputs.update({'codeql-languages': sorted(languages), 'security-options': {'config-file': '', 'build-command': '', **security}, 'workflow-files': workflow_files, 'pypi-projects': pypi_projects})
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              for name, value in outputs.items(): output.write(f'{name}={json.dumps(value, separators=(",", ":"))}\n')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write('\n'.join(lines) + '\n')
+          PY
+
+  python:
+    name: Python (${{ matrix.project.project_dir }})
+    needs: discover
+    if: needs.discover.outputs.python-projects != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.python-projects) }}
+    uses: ./.github/workflows/python.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+      manager: ${{ matrix.project.manager }}
+      python-versions: ${{ toJSON(matrix.project.python_versions) }}
+      operating-systems: ${{ toJSON(matrix.project.operating_systems) }}
+      pip-extras: ${{ matrix.project.pip_extras }}
+      pip-constraints: ${{ matrix.project.pip_constraints }}
+      test-path: ${{ matrix.project.test_path }}
+      coverage-source: ${{ matrix.project.coverage_source }}
+      coverage-min: ${{ matrix.project.coverage_min }}
+      build-distribution: ${{ matrix.project.build_distribution }}
+
+  node:
+    name: Node (${{ matrix.project.project_dir }})
+    needs: discover
+    if: needs.discover.outputs.node-projects != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.node-projects) }}
+    uses: ./.github/workflows/node.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+      manager: ${{ matrix.project.manager }}
+      node-versions: ${{ toJSON(matrix.project.node_versions) }}
+      operating-systems: ${{ toJSON(matrix.project.operating_systems) }}
+      test-shards: ${{ matrix.project.test_shards }}
+      pnpm-version: ${{ matrix.project.pnpm_version }}
+      bun-version: ${{ matrix.project.bun_version }}
+      audit-level: ${{ matrix.project.audit_level }}
+
+  playwright:
+    name: Browser (${{ matrix.project.project_dir }} / ${{ matrix.project.test_script }})
+    needs: discover
+    if: needs.discover.outputs.playwright-projects != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.playwright-projects) }}
+    uses: ./.github/workflows/browser.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+      manager: ${{ matrix.project.manager }}
+      node-version: ${{ matrix.project.node_version }}
+      pnpm-version: ${{ matrix.project.pnpm_version }}
+      bun-version: ${{ matrix.project.bun_version }}
+      test-script: ${{ matrix.project.test_script }}
+      browsers: ${{ matrix.project.browsers }}
+      shards: ${{ matrix.project.shards }}
+
+  docker:
+    name: Docker (${{ matrix.image.dockerfile }})
+    needs: discover
+    if: needs.discover.outputs.dockerfiles != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        image: ${{ fromJSON(needs.discover.outputs.dockerfiles) }}
+    uses: ./.github/workflows/docker.yml
+    with:
+      dockerfile: ${{ matrix.image.dockerfile }}
+      build-context: ${{ matrix.image.build_context }}
+      platforms: ${{ matrix.image.platforms }}
+      target: ${{ matrix.image.target }}
+      build-args: ${{ matrix.image.build_args }}
+
+  project-checks:
+    name: ${{ matrix.check.target }} (${{ matrix.check.project_dir }})
+    needs: discover
+    if: needs.discover.outputs.project-checks != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        check: ${{ fromJSON(needs.discover.outputs.project-checks) }}
+    uses: ./.github/workflows/project-check.yml
+    with:
+      project-dir: ${{ matrix.check.project_dir }}
+      target: ${{ matrix.check.target }}
+      check-drift: ${{ matrix.check.check_drift }}
+      python-version: ${{ matrix.check.python_version }}
+      node-version: ${{ matrix.check.node_version }}
+      pnpm-version: ${{ matrix.check.pnpm_version }}
+      bun-version: ${{ matrix.check.bun_version }}
+
+  integration:
+    name: Service integration (${{ matrix.project.project_dir }})
+    needs: discover
+    if: needs.discover.outputs.integration-projects != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.integration-projects) }}
+    uses: ./.github/workflows/integration.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+
+  ai-evaluations:
+    name: AI evaluations (${{ matrix.project.project_dir }})
+    needs: discover
+    if: needs.discover.outputs.ai-evaluation-projects != '[]' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.ai-evaluation-projects) }}
+    uses: ./.github/workflows/ai-eval.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+    secrets:
+      ai-eval-api-key: ${{ secrets.AI_EVAL_API_KEY }}
+
+  workflow-lint:
+    name: Workflow validation
+    needs: discover
+    if: needs.discover.outputs.workflow-files == 'true'
+    uses: ./.github/workflows/workflow-lint.yml
+
+  security:
+    name: Security checks
+    needs: discover
+    if: github.event_name == 'pull_request' || needs.discover.outputs.codeql-languages != '[]'
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+      pull-requests: read
+    uses: ./.github/workflows/security.yml
+    with:
+      languages: ${{ needs.discover.outputs.codeql-languages }}
+      config-file: ${{ fromJSON(needs.discover.outputs.security-options)['config-file'] }}
+      build-command: ${{ fromJSON(needs.discover.outputs.security-options)['build-command'] }}
+
+  quality-gate:
+    name: Quality gate
+    if: always()
+    needs: [discover, python, node, playwright, docker, project-checks, integration, ai-evaluations, workflow-lint, security]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require every selected qualification check to pass
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+          TRUSTED_AI_EVENT: ${{ github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          needs = json.loads(os.environ['NEEDS_JSON'])
+          outputs = needs.get('discover', {}).get('outputs', {})
+          expected = {'discover': True}
+          for job, output in {'python': 'python-projects', 'node': 'node-projects', 'playwright': 'playwright-projects', 'docker': 'dockerfiles', 'project-checks': 'project-checks', 'integration': 'integration-projects'}.items():
+              expected[job] = bool(json.loads(outputs.get(output, '[]')))
+          expected['ai-evaluations'] = bool(json.loads(outputs.get('ai-evaluation-projects', '[]'))) and os.environ['TRUSTED_AI_EVENT'] == 'true'
+          expected['workflow-lint'] = outputs.get('workflow-files') == 'true'
+          expected['security'] = os.environ['EVENT_NAME'] == 'pull_request' or bool(json.loads(outputs.get('codeql-languages', '[]')))
+          errors = []
+          summary = ['## Quality gate', '', '| Check | Required this run | Result |', '| --- | --- | --- |']
+          for job, required in expected.items():
+              result = needs.get(job, {}).get('result', 'missing')
+              summary.append(f'| {job} | {required} | {result} |')
+              if result in {'failure', 'cancelled', 'missing'} or (required and result != 'success'):
+                  errors.append(f'{job}: expected success, got {result}')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output: output.write('\n'.join(summary) + '\n')
+          if errors:
+              for message in errors: print(f'::error::{message}')
+              raise SystemExit(1)
+          PY
+
+  publish-pypi:
+    name: Publish ${{ matrix.project.distribution_name }} to PyPI
+    needs: [discover, quality-gate]
+    if: github.event_name == 'release' && github.event.action == 'published' && !github.event.release.prerelease && needs.discover.outputs.pypi-projects != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.pypi-projects) }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/publish-pypi.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+      distribution-name: ${{ matrix.project.distribution_name }}
+    secrets:
+      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}

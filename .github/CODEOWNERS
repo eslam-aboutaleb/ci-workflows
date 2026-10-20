@@ -1,0 +1,3 @@
+# Protect this file and the shared workflows with required owner reviews in a ruleset.
+/.github/ @eslam-aboutaleb
+/README.md @eslam-aboutaleb

@@ -1,0 +1,103 @@
+name: Docker image build
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Docker project directory relative to repository root
+        type: string
+        default: .
+      dockerfile:
+        description: Dockerfile path relative to project-dir
+        type: string
+        default: Dockerfile
+      build-context:
+        description: Build context path relative to project-dir
+        type: string
+        default: .
+      platforms:
+        description: Comma-separated Linux platforms
+        type: string
+        default: linux/amd64
+      target:
+        description: Optional Docker build stage
+        type: string
+        default: ''
+      build-args:
+        description: Newline-separated non-secret KEY=value build arguments
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    name: Check and build Docker image
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Docker build inputs
+        id: contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          BUILD_CONTEXT: ${{ inputs.build-context }}
+          PLATFORMS: ${{ inputs.platforms }}
+          TARGET: ${{ inputs.target }}
+          BUILD_ARGS: ${{ inputs.build-args }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, re
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          def local(value, base=Path('.')):
+              part = Path(value)
+              path = base / part
+              if not value or '\n' in value or '\r' in value or part.is_absolute() or '..' in part.parts or not (root / path).resolve().is_relative_to(root):
+                  raise SystemExit('Docker paths must stay inside the repository')
+              return path
+          project = local(os.environ['PROJECT_DIR'])
+          dockerfile = local(os.environ['DOCKERFILE'], project)
+          context = local(os.environ['BUILD_CONTEXT'], project)
+          if not dockerfile.is_file() or not context.is_dir(): raise SystemExit('Missing Dockerfile or build context')
+          platforms = os.environ['PLATFORMS']
+          if not re.fullmatch(r'linux/(amd64|arm64|arm/v7)(,linux/(amd64|arm64|arm/v7))*', platforms): raise SystemExit('Unsupported platforms')
+          if os.environ['TARGET'] and not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', os.environ['TARGET']): raise SystemExit('Invalid target')
+          for line in os.environ['BUILD_ARGS'].splitlines():
+              if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=[^\r\n]*', line): raise SystemExit('Build arguments must be KEY=value lines')
+          scope = hashlib.sha256(f'{dockerfile}:{platforms}:{os.environ["TARGET"]}'.encode()).hexdigest()[:16]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'dockerfile={dockerfile.as_posix()}\ncontext={context.as_posix()}\nscope=docker-{scope}\n')
+          PY
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        if: inputs.platforms != 'linux/amd64'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Dockerfile build checks
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.contract.outputs.context }}
+          file: ${{ steps.contract.outputs.dockerfile }}
+          target: ${{ inputs.target }}
+          build-args: ${{ inputs.build-args }}
+          platforms: ${{ inputs.platforms }}
+          call: check
+          push: false
+      - name: Build every requested platform
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ steps.contract.outputs.context }}
+          file: ${{ steps.contract.outputs.dockerfile }}
+          target: ${{ inputs.target }}
+          build-args: ${{ inputs.build-args }}
+          platforms: ${{ inputs.platforms }}
+          pull: true
+          push: false
+          outputs: type=cacheonly
+          cache-from: type=gha,scope=${{ steps.contract.outputs.scope }}
+          cache-to: type=gha,mode=max,scope=${{ steps.contract.outputs.scope }}

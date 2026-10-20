@@ -1,4 +1,4 @@
-name: Reusable Node CI
+name: Node CI
 
 on:
   workflow_call:
@@ -7,31 +7,31 @@ on:
         required: true
         type: string
       manager:
-        description: npm or pnpm
+        description: npm, pnpm, or bun
         required: true
         type: string
       node-versions:
         description: JSON array of supported Node versions
-        required: false
         type: string
         default: '["22"]'
+      operating-systems:
+        description: JSON array of GitHub hosted runner labels
+        type: string
+        default: '["ubuntu-latest"]'
+      test-shards:
+        description: Test script must honor CI_SHARD_INDEX and CI_SHARD_TOTAL when greater than one
+        type: number
+        default: 1
       pnpm-version:
-        description: Optional pnpm version; leave empty to use packageManager in the caller package.json
-        required: false
+        description: Optional pnpm version; otherwise use packageManager in package.json
         type: string
         default: ''
-      typecheck-script:
-        description: Existing package.json script; empty disables type checking
-        required: false
+      bun-version:
+        description: Exact Bun version; otherwise use bun@<version> from packageManager
         type: string
-        default: typecheck
-      run-tests:
-        required: false
-        type: boolean
-        default: true
+        default: ''
       audit-level:
-        description: 'none, moderate, high, or critical; use none when tracked baseline advisories prevent a useful gate'
-        required: false
+        description: moderate, high, or critical
         type: string
         default: high
 
@@ -39,9 +39,66 @@ permissions:
   contents: read
 
 jobs:
-  checks:
-    name: Node ${{ matrix.node }} quality
+  validate:
+    name: Validate Node contract
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      shards: ${{ steps.contract.outputs.shards }}
+      bun-version: ${{ steps.contract.outputs.bun-version }}
+      artifact-key: ${{ steps.contract.outputs.artifact-key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate inputs, lockfile, and scripts
+        id: contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          MANAGER: ${{ inputs.manager }}
+          AUDIT_LEVEL: ${{ inputs.audit-level }}
+          NODE_VERSIONS: ${{ inputs.node-versions }}
+          OPERATING_SYSTEMS: ${{ inputs.operating-systems }}
+          TEST_SHARDS: ${{ inputs.test-shards }}
+          BUN_VERSION: ${{ inputs.bun-version }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, re
+          from pathlib import Path
+          def require(condition, message):
+              if not condition: raise SystemExit(message)
+          root = Path.cwd().resolve()
+          project = Path(os.environ['PROJECT_DIR'])
+          require(not project.is_absolute() and '..' not in project.parts and (root / project).resolve().is_relative_to(root), 'project-dir must be inside the repository')
+          versions = json.loads(os.environ['NODE_VERSIONS'])
+          require(isinstance(versions, list) and 0 < len(versions) <= 8 and all(isinstance(v, str) and re.fullmatch(r'\d+(?:\.\d+){0,2}', v) for v in versions), 'Invalid Node versions')
+          require(len(set(versions)) == len(versions), 'Duplicate Node versions')
+          systems = json.loads(os.environ['OPERATING_SYSTEMS'])
+          require(isinstance(systems, list) and systems and all(v in {'ubuntu-latest', 'windows-latest', 'macos-latest'} for v in systems) and len(set(systems)) == len(systems), 'Invalid operating-systems')
+          shards = int(os.environ['TEST_SHARDS'])
+          require(1 <= shards <= 16 and len(versions) * len(systems) * shards <= 256, 'Test matrix must have 1-16 shards and at most 256 jobs')
+          manager = os.environ['MANAGER']
+          locks = {'npm': ['package-lock.json'], 'pnpm': ['pnpm-lock.yaml'], 'bun': ['bun.lock', 'bun.lockb']}
+          require(manager in locks, 'manager must be npm, pnpm, or bun')
+          require(any((project / name).is_file() for name in locks[manager]), 'A local lockfile is required')
+          require(os.environ['AUDIT_LEVEL'] in {'moderate', 'high', 'critical'}, 'Invalid audit-level')
+          package = json.loads((project / 'package.json').read_text())
+          for name in ('lint', 'typecheck', 'test', 'build'):
+              require(bool(package.get('scripts', {}).get(name)), f'Required script missing: {name}')
+          bun = os.environ['BUN_VERSION'] or package.get('packageManager', '').removeprefix('bun@').split('+')[0]
+          if manager == 'bun': require(bool(re.fullmatch(r'\d+\.\d+\.\d+', bun)), 'Pin an exact bun-version or packageManager bun@<version>')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'shards={json.dumps(list(range(1, shards + 1)))}\n')
+              output.write(f'bun-version={bun if manager == "bun" else ""}\n')
+              output.write(f'artifact-key={hashlib.sha256(str(project).encode()).hexdigest()[:16]}\n')
+          PY
+
+  checks:
+    name: Node ${{ matrix.node }} / ${{ matrix.os }} / shard ${{ matrix.shard }}
+    needs: validate
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     permissions:
       contents: read
@@ -49,70 +106,80 @@ jobs:
       fail-fast: false
       matrix:
         node: ${{ fromJSON(inputs.node-versions) }}
+        os: ${{ fromJSON(inputs.operating-systems) }}
+        shard: ${{ fromJSON(needs.validate.outputs.shards) }}
     defaults:
       run:
         working-directory: ${{ inputs.project-dir }}
+        shell: bash
+    env:
+      CI: 'true'
+      CI_SHARD_INDEX: ${{ matrix.shard }}
+      CI_SHARD_TOTAL: ${{ inputs.test-shards }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: inputs.manager == 'pnpm'
         with:
           version: ${{ inputs.pnpm-version }}
           package_json_file: ${{ inputs.project-dir }}/package.json
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-          cache: ${{ inputs.manager }}
+          cache: ${{ inputs.manager != 'bun' && inputs.manager || '' }}
+          package-manager-cache: false
           cache-dependency-path: ${{ inputs.project-dir }}/${{ inputs.manager == 'npm' && 'package-lock.json' || 'pnpm-lock.yaml' }}
-      - name: Validate inputs, lockfile, and scripts
-        env:
-          MANAGER: ${{ inputs.manager }}
-          TYPECHECK: ${{ inputs.typecheck-script }}
-          AUDIT_LEVEL: ${{ inputs.audit-level }}
-          RUN_TESTS: ${{ inputs.run-tests }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$MANAGER" == npm || "$MANAGER" == pnpm ]]
-          [[ "$TYPECHECK" =~ ^[a-zA-Z0-9:_-]*$ ]]
-          [[ "$AUDIT_LEVEL" =~ ^(none|moderate|high|critical)$ ]]
-          node - <<'JS'
-          const fs = require('node:fs');
-          const p = JSON.parse(fs.readFileSync('package.json'));
-          for (const name of ['lint', 'build', ...(process.env.TYPECHECK ? [process.env.TYPECHECK] : []), ...(process.env.RUN_TESTS === 'true' ? ['test'] : [])]) {
-            if (!p.scripts?.[name]) throw new Error(`Required package script missing: ${name}`);
-          }
-          JS
-          if [[ "$MANAGER" == npm ]]; then test -f package-lock.json; else test -f pnpm-lock.yaml; fi
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        if: inputs.manager == 'bun'
+        with:
+          bun-version: ${{ needs.validate.outputs.bun-version }}
       - name: Frozen install
         env:
           MANAGER: ${{ inputs.manager }}
-        shell: bash
         run: |
           set -euo pipefail
-          if [[ "$MANAGER" == npm ]]; then npm ci; else pnpm install --frozen-lockfile; fi
+          case "$MANAGER" in
+            npm) npm ci ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            bun) bun install --frozen-lockfile ;;
+          esac
       - name: Dependency audit
+        if: matrix.shard == 1
         env:
           MANAGER: ${{ inputs.manager }}
           AUDIT_LEVEL: ${{ inputs.audit-level }}
-        shell: bash
         run: |
           set -euo pipefail
-          if [[ "$AUDIT_LEVEL" == none ]]; then exit 0; fi
-          if [[ "$MANAGER" == npm ]]; then npm audit --audit-level="$AUDIT_LEVEL"; else pnpm audit --audit-level "$AUDIT_LEVEL"; fi
-      - name: Lint, typecheck, tests, build
+          case "$MANAGER" in
+            npm) npm audit --audit-level="$AUDIT_LEVEL" ;;
+            pnpm) pnpm audit --audit-level "$AUDIT_LEVEL" ;;
+            bun) bun audit --audit-level "$AUDIT_LEVEL" ;;
+          esac
+      - name: Lint and typecheck
+        if: matrix.shard == 1
         env:
           MANAGER: ${{ inputs.manager }}
-          TYPECHECK: ${{ inputs.typecheck-script }}
-          RUN_TESTS: ${{ inputs.run-tests }}
-        shell: bash
         run: |
           set -euo pipefail
-          runner=(npm run)
-          if [[ "$MANAGER" == pnpm ]]; then runner=(pnpm run); fi
-          "${runner[@]}" lint
-          if [[ -n "$TYPECHECK" ]]; then "${runner[@]}" "$TYPECHECK"; fi
-          if [[ "$RUN_TESTS" == true ]]; then "${runner[@]}" test; fi
-          "${runner[@]}" build
+          "$MANAGER" run lint
+          "$MANAGER" run typecheck
+      - name: Unit tests
+        env:
+          MANAGER: ${{ inputs.manager }}
+        run: '"$MANAGER" run test'
+      - name: Build
+        if: matrix.shard == 1
+        env:
+          MANAGER: ${{ inputs.manager }}
+        run: '"$MANAGER" run build'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: node-${{ needs.validate.outputs.artifact-key }}-${{ matrix.os }}-${{ matrix.node }}-shard-${{ matrix.shard }}
+          path: |
+            ${{ inputs.project-dir }}/test-results/
+            ${{ inputs.project-dir }}/coverage/
+          if-no-files-found: ignore
+          retention-days: 7
