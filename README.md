@@ -64,6 +64,8 @@ The aggregate workflow accepts `config-file` (default `.github/ci.json`) and `ch
 | A standalone `package.json` without a supported lockfile | Discovery fails instead of silently omitting tests |
 | `test:e2e`, `test:visual`, or `test:a11y` package scripts | Playwright/browser checks for each matching script |
 | `Dockerfile`, `Dockerfile.*`, or `*.Dockerfile` | One image validation and build per Dockerfile |
+| `compose.yaml`, `compose.yml`, or configured compose files | Docker Compose config validation and optional platform manifest checks |
+| `*.tf` or `*.tm.hcl` | Terraform format/validation and Terramate generation drift checks |
 | `ci-docs` or `ci-docs-links` Makefile targets | Documentation build/tests or link verification |
 | `ci-generated` Makefile target | Regenerate files and reject drift |
 | `ci-quality` Makefile target | Project-owned quality checks for any other stack |
@@ -126,10 +128,12 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 | [node.yml](.github/workflows/node.yml) | `project-dir`, `manager` (`npm`/`pnpm`/`bun`) | Frozen install, dependency audit, mandatory lint/typecheck/test/build; optional OS and shard matrices; available test/coverage artifacts |
 | [browser.yml](.github/workflows/browser.yml) | `project-dir`, `manager` | Locked Playwright install, browser or visual script, shards, available reports/traces/screenshots |
 | [docker.yml](.github/workflows/docker.yml) | None | Dockerfile build checks and image builds, optional stages/platforms/arguments, scoped BuildKit cache; no registry credentials |
+| [compose.yml](.github/workflows/compose.yml) | None | Docker Compose configuration validation and optional multi-arch image manifest verification |
+| [terraform.yml](.github/workflows/terraform.yml) | `project-dir` | Terraform format/validate across modules and stacks, plus Terramate format and generation drift checks |
 | [project-check.yml](.github/workflows/project-check.yml) | `project-dir`, `target` | Run `ci-install`, then the chosen Make target; optional generated-file drift check |
 | [integration.yml](.github/workflows/integration.yml) | `project-dir` | Healthy PostgreSQL/Redis services, install, migrate, integration tests |
 | [ai-eval.yml](.github/workflows/ai-eval.yml) | `project-dir` | Install Python/Node/uv tooling, run `ci-eval`; optional named provider key |
-| [security.yml](.github/workflows/security.yml) | None | CodeQL, compiled-language builds, optional caller-owned configuration, dependency review on PRs |
+| [security.yml](.github/workflows/security.yml) | None | CodeQL, compiled-language builds, Gitleaks secret scan, optional caller-owned configuration, dependency review on PRs |
 | [workflow-lint.yml](.github/workflows/workflow-lint.yml) | None | Actionlint against the consuming repository's workflows |
 | [publish-docker.yml](.github/workflows/publish-docker.yml) | `image` | Event validation, image build validation, approved GHCR publication, provenance, SBOM and digest output |
 | [publish-pypi.yml](.github/workflows/publish-pypi.yml) | `project-dir`, `distribution-name` | Match release tag to package metadata, build/check distributions, approved publication using `PYPI_API_TOKEN` |

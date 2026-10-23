@@ -257,6 +257,19 @@ class RepositoryFixture(unittest.TestCase):
         result = subprocess.run([sys.executable, '-c', program], cwd=self.repo, env={**env, 'BUILD_CONTEXT': '..'}, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
 
+    def test_compose_and_terraform_discovery(self):
+        self.write('gateway/compose.yaml', 'services: {}\n')
+        self.write('gateway/compose.prod.yaml', 'services: {}\n')
+        self.write('terramate.tm.hcl', 'terramate {}\n')
+        self.write('infrastructure/main.tf', 'terraform {}\n')
+        self.config(compose={'gateway': {'platforms': 'linux/arm64'}}, terraform={'.': {'terraform-version': '1.12.2', 'terramate-version': '0.11.6'}})
+        result = self.run_discovery()
+        self.assertEqual(len(result['compose-projects']), 1)
+        self.assertEqual(result['compose-projects'][0]['files'], ['compose.yaml', 'compose.prod.yaml'])
+        self.assertEqual(result['compose-projects'][0]['platforms'], 'linux/arm64')
+        self.assertEqual(len(result['terraform-projects']), 1)
+        self.assertEqual(result['terraform-projects'][0]['terraform_version'], '1.12.2')
+
 
 class QualityGateTests(unittest.TestCase):
     def gate(self, overrides=None, outputs=None, trusted=False, event='pull_request'):
