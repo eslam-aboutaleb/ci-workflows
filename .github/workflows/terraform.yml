@@ -1,0 +1,102 @@
+name: Terraform and Terramate validation
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Directory containing Terraform or Terramate files
+        required: true
+        type: string
+      terraform-version:
+        description: Exact Terraform version to install
+        type: string
+        default: '1.12.2'
+      terramate-version:
+        description: Optional Terramate version when Terramate files are present
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    name: Validate Terraform (${{ inputs.project-dir }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Terraform contract inputs
+        id: contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          TERRAFORM_VERSION: ${{ inputs.terraform-version }}
+          TERRAMATE_VERSION: ${{ inputs.terramate-version }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          project = Path(os.environ['PROJECT_DIR'])
+          if project.is_absolute() or '..' in project.parts or not (root / project).resolve().is_relative_to(root) or not (root / project).is_dir():
+              raise SystemExit('project-dir must be an existing directory inside the repository')
+          tf_ver = os.environ['TERRAFORM_VERSION']
+          if not re.fullmatch(r'\d+\.\d+\.\d+', tf_ver):
+              raise SystemExit('terraform-version must be an exact X.Y.Z version')
+          tm_ver = os.environ['TERRAMATE_VERSION']
+          if tm_ver and not re.fullmatch(r'\d+\.\d+\.\d+', tm_ver):
+              raise SystemExit('terramate-version must be an exact X.Y.Z version')
+          tf_dirs = sorted({p.parent.as_posix() for p in (root / project).rglob('*.tf') if '.terraform' not in p.parts})
+          has_tm = any(p.name.endswith('.tm.hcl') for p in (root / project).rglob('*.tm.hcl')) or (root / 'terramate.tm.hcl').is_file()
+          if not tf_dirs and not has_tm:
+              raise SystemExit('No Terraform or Terramate files found in project-dir')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'has-terramate={str(has_tm).lower()}\n')
+          PY
+      - name: Install Terraform and Terramate
+        env:
+          TERRAFORM_VERSION: ${{ inputs.terraform-version }}
+          TERRAMATE_VERSION: ${{ inputs.terramate-version }}
+          HAS_TERRAMATE: ${{ steps.contract.outputs.has-terramate }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip" -o /tmp/terraform.zip
+          sudo unzip -q -o /tmp/terraform.zip -d /usr/local/bin
+          rm -f /tmp/terraform.zip
+          terraform version
+          if [[ "$HAS_TERRAMATE" == "true" ]]; then
+            TM_VER="${TERRAMATE_VERSION:-0.11.6}"
+            curl -fsSL "https://github.com/terramate-io/terramate/releases/download/v${TM_VER}/terramate_${TM_VER}_linux_x86_64.tar.gz" | sudo tar -xz -C /usr/local/bin terramate
+            terramate version
+          fi
+      - name: Validate Terramate and generated code drift
+        if: steps.contract.outputs.has-terramate == 'true'
+        working-directory: ${{ inputs.project-dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terramate fmt --check
+          terramate generate
+          git diff --exit-code
+          git diff --cached --exit-code
+          if [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+            echo '::error::Terramate generation created untracked files.'
+            git ls-files --others --exclude-standard
+            exit 1
+          fi
+      - name: Format check and validate Terraform directories
+        working-directory: ${{ inputs.project-dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive -diff
+          while IFS= read -r dir; do
+            echo "Validating Terraform directory: $dir"
+            (cd "$dir" && terraform init -backend=false -input=false && terraform validate)
+          done < <(find . -name '*.tf' -not -path '*/.terraform/*' -exec dirname {} \; | sort -u)

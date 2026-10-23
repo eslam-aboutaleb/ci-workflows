@@ -47,6 +47,8 @@ jobs:
       node-projects: ${{ steps.scan.outputs.node-projects }}
       playwright-projects: ${{ steps.scan.outputs.playwright-projects }}
       dockerfiles: ${{ steps.scan.outputs.dockerfiles }}
+      compose-projects: ${{ steps.scan.outputs.compose-projects }}
+      terraform-projects: ${{ steps.scan.outputs.terraform-projects }}
       project-checks: ${{ steps.scan.outputs.project-checks }}
       integration-projects: ${{ steps.scan.outputs.integration-projects }}
       ai-evaluation-projects: ${{ steps.scan.outputs.ai-evaluation-projects }}
@@ -114,8 +116,8 @@ jobs:
           config_path = Path(local(os.environ.get('CONFIG_FILE', '.github/ci.json')))
           config = json.loads(config_path.read_text(), object_pairs_hook=unique_json) if config_path.exists() else {'version': 1}
           require(isinstance(config, dict) and type(config.get('version')) is int and config['version'] == 1, 'CI configuration must be an object with version: 1')
-          require(not (set(config) - {'$schema', 'version', 'python', 'node', 'browser', 'docker', 'contracts', 'security'}), 'Unknown CI configuration section')
-          for section in ('python', 'node', 'browser', 'docker', 'security'):
+          require(not (set(config) - {'$schema', 'version', 'python', 'node', 'browser', 'docker', 'compose', 'terraform', 'contracts', 'security'}), 'Unknown CI configuration section')
+          for section in ('python', 'node', 'browser', 'docker', 'compose', 'terraform', 'security'):
               require(isinstance(config.get(section, {}), dict), f'{section} configuration must be an object')
           require(isinstance(config.get('contracts', []), list), 'contracts must be an array')
           require(isinstance(config.get('$schema', ''), str), '$schema must be a string')
@@ -178,8 +180,8 @@ jobs:
               require(len(matches) <= 1, f'Conflicting package manager lockfiles: {directory}')
               return matches[0] if matches else None
           
-          python_projects, node_projects, browser_projects, dockerfiles, project_checks, pypi_projects = [], [], [], [], [], []
-          seen = {name: set() for name in ('python', 'node', 'browser', 'docker')}
+          python_projects, node_projects, browser_projects, dockerfiles, compose_projects, terraform_projects, project_checks, pypi_projects = [], [], [], [], [], [], [], []
+          seen = {name: set() for name in ('python', 'node', 'browser', 'docker', 'compose', 'terraform')}
           quality_contracts = []
           contract_configs = {}
           for item in config.get('contracts', []):
@@ -285,7 +287,32 @@ jobs:
                   require(all(isinstance(arg, str) and bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=[^\r\n]*', arg)) for arg in values['build-args']), 'Docker build-args must be KEY=value strings without secrets')
                   dockerfiles.append({'dockerfile': name, 'build_context': values['build-context'], 'platforms': values['platforms'], 'target': values['target'], 'build_args': '\n'.join(values['build-args']), 'paths': values.get('paths', [])})
           
-          for section in ('python', 'node', 'browser', 'docker'):
+          compose_dirs = sorted({p.parent for p in entries if p.name in {'compose.yaml', 'compose.yml'}} | {Path(local(d, directory=True)) for d in config.get('compose', {})})
+          for directory in compose_dirs:
+              name = directory.as_posix()
+              seen['compose'].add(name)
+              default_files = [n for n in ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml', 'compose.prod.yaml', 'compose.prod.yml') if (directory / n).is_file()]
+              values = options('compose', name, {'files': default_files, 'platforms': ''})
+              require(isinstance(values['files'], list) and values['files'] and all(isinstance(f, str) and f for f in values['files']), f'compose.{name}.files must be a non-empty array of filenames')
+              for f in values['files']:
+                  local((directory / f).as_posix(), file=True)
+              if values['platforms']:
+                  require(bool(re.fullmatch(r'linux/(amd64|arm64|arm/v7)(,linux/(amd64|arm64|arm/v7))*', values['platforms'])), f'Unsupported compose platforms in {name}')
+              compose_projects.append({'project_dir': name, 'files': values['files'], 'platforms': values['platforms'], 'paths': values.get('paths', [])})
+          
+          tf_entries = [p for p in entries if (p.suffix == '.tf' or p.name.endswith('.tm.hcl')) and '.terraform' not in p.parts]
+          if tf_entries:
+              tf_roots = sorted(config.get('terraform', {})) or ['.']
+              for name in tf_roots:
+                  directory = local(name, directory=True)
+                  seen['terraform'].add(directory)
+                  values = options('terraform', directory, {'terraform-version': '1.12.2', 'terramate-version': ''})
+                  require(bool(re.fullmatch(r'\d+\.\d+\.\d+', values['terraform-version'])), f'Invalid terraform-version for {directory}')
+                  if values['terramate-version']:
+                      require(bool(re.fullmatch(r'\d+\.\d+\.\d+', values['terramate-version'])), f'Invalid terramate-version for {directory}')
+                  terraform_projects.append({'project_dir': directory, 'terraform_version': values['terraform-version'], 'terramate_version': values['terramate-version'], 'paths': values.get('paths', [])})
+          
+          for section in ('python', 'node', 'browser', 'docker', 'compose', 'terraform'):
               unknown = set(config.get(section, {})) - seen[section]
               require(not unknown, f'Configuration references undiscovered {section} projects: {sorted(unknown)}')
           
@@ -307,11 +334,15 @@ jobs:
           workflow_files = any(p.parent == Path('.github/workflows') and p.suffix in {'.yml', '.yaml'} for p in entries)
           if workflow_files or any(p.name in {'action.yml', 'action.yaml'} for p in entries): languages.append('actions')
           security = config.get('security', {})
-          require(not (set(security) - {'config-file', 'build-command'}), 'Unknown security configuration option')
-          require(all(isinstance(v, str) for v in security.values()), 'Security options must be strings')
+          require(not (set(security) - {'config-file', 'build-command', 'enable-gitleaks'}), 'Unknown security configuration option')
+          for key in ('config-file', 'build-command'):
+              if key in security:
+                  require(isinstance(security[key], str), f'{key} must be a string')
+          if 'enable-gitleaks' in security:
+              require(isinstance(security['enable-gitleaks'], bool), 'enable-gitleaks must be a boolean')
           if security.get('config-file'): local(security['config-file'], file=True)
           
-          outputs = {'python-projects': python_projects, 'node-projects': node_projects, 'playwright-projects': browser_projects, 'dockerfiles': dockerfiles, 'project-checks': project_checks, 'integration-projects': integration_projects, 'ai-evaluation-projects': ai_projects}
+          outputs = {'python-projects': python_projects, 'node-projects': node_projects, 'playwright-projects': browser_projects, 'dockerfiles': dockerfiles, 'compose-projects': compose_projects, 'terraform-projects': terraform_projects, 'project-checks': project_checks, 'integration-projects': integration_projects, 'ai-evaluation-projects': ai_projects}
           lines = ['## Discovered quality checks', '', '| Check | Discovered | Selected |', '| --- | ---: | ---: |']
           for name, values in list(outputs.items()):
               total = len(values)
@@ -320,7 +351,7 @@ jobs:
               outputs[name] = values
               lines.append(f'| {name} | {total} | {len(values)} |')
           if workspace_members: lines.extend(['', 'Workspace members are covered by their root CI scripts:', *[f'- {member}' for member in workspace_members]])
-          outputs.update({'codeql-languages': sorted(languages), 'security-options': {'config-file': '', 'build-command': '', **security}, 'workflow-files': workflow_files, 'pypi-projects': pypi_projects})
+          outputs.update({'codeql-languages': sorted(languages), 'security-options': {'config-file': '', 'build-command': '', 'enable-gitleaks': True, **security}, 'workflow-files': workflow_files, 'pypi-projects': pypi_projects})
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for name, value in outputs.items(): output.write(f'{name}={json.dumps(value, separators=(",", ":"))}\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
@@ -406,6 +437,36 @@ jobs:
       target: ${{ matrix.image.target }}
       build-args: ${{ matrix.image.build_args }}
 
+  compose:
+    name: Compose (${{ matrix.project.project_dir }})
+    needs: discover
+    if: needs.discover.outputs.compose-projects != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.compose-projects) }}
+    uses: ./.github/workflows/compose.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+      files: ${{ toJSON(matrix.project.files) }}
+      platforms: ${{ matrix.project.platforms }}
+
+  terraform:
+    name: Terraform (${{ matrix.project.project_dir }})
+    needs: discover
+    if: needs.discover.outputs.terraform-projects != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        project: ${{ fromJSON(needs.discover.outputs.terraform-projects) }}
+    uses: ./.github/workflows/terraform.yml
+    with:
+      project-dir: ${{ matrix.project.project_dir }}
+      terraform-version: ${{ matrix.project.terraform_version }}
+      terramate-version: ${{ matrix.project.terramate_version }}
+
   project-checks:
     name: ${{ matrix.check.target }} (${{ matrix.check.project_dir }})
     needs: discover
@@ -462,7 +523,7 @@ jobs:
   security:
     name: Security checks
     needs: discover
-    if: github.event_name == 'pull_request' || needs.discover.outputs.codeql-languages != '[]'
+    if: github.event_name == 'pull_request' || needs.discover.outputs.codeql-languages != '[]' || fromJSON(needs.discover.outputs.security-options)['enable-gitleaks']
     permissions:
       contents: read
       actions: read
@@ -473,11 +534,12 @@ jobs:
       languages: ${{ needs.discover.outputs.codeql-languages }}
       config-file: ${{ fromJSON(needs.discover.outputs.security-options)['config-file'] }}
       build-command: ${{ fromJSON(needs.discover.outputs.security-options)['build-command'] }}
+      enable-gitleaks: ${{ fromJSON(needs.discover.outputs.security-options)['enable-gitleaks'] }}
 
   quality-gate:
     name: Quality gate
     if: always()
-    needs: [discover, python, node, playwright, docker, project-checks, integration, ai-evaluations, workflow-lint, security]
+    needs: [discover, python, node, playwright, docker, compose, terraform, project-checks, integration, ai-evaluations, workflow-lint, security]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -494,11 +556,11 @@ jobs:
           needs = json.loads(os.environ['NEEDS_JSON'])
           outputs = needs.get('discover', {}).get('outputs', {})
           expected = {'discover': True}
-          for job, output in {'python': 'python-projects', 'node': 'node-projects', 'playwright': 'playwright-projects', 'docker': 'dockerfiles', 'project-checks': 'project-checks', 'integration': 'integration-projects'}.items():
+          for job, output in {'python': 'python-projects', 'node': 'node-projects', 'playwright': 'playwright-projects', 'docker': 'dockerfiles', 'compose': 'compose-projects', 'terraform': 'terraform-projects', 'project-checks': 'project-checks', 'integration': 'integration-projects'}.items():
               expected[job] = bool(json.loads(outputs.get(output, '[]')))
           expected['ai-evaluations'] = bool(json.loads(outputs.get('ai-evaluation-projects', '[]'))) and os.environ['TRUSTED_AI_EVENT'] == 'true'
           expected['workflow-lint'] = outputs.get('workflow-files') == 'true'
-          expected['security'] = os.environ['EVENT_NAME'] == 'pull_request' or bool(json.loads(outputs.get('codeql-languages', '[]')))
+          expected['security'] = os.environ['EVENT_NAME'] == 'pull_request' or bool(json.loads(outputs.get('codeql-languages', '[]'))) or json.loads(outputs.get('security-options', '{}')).get('enable-gitleaks', True)
           errors = []
           summary = ['## Quality gate', '', '| Check | Required this run | Result |', '| --- | --- | --- |']
           for job, required in expected.items():

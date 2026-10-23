@@ -1,0 +1,95 @@
+name: Docker Compose validation
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Directory containing Docker Compose files
+        type: string
+        default: .
+      files:
+        description: JSON array of Compose filenames relative to project-dir
+        type: string
+        default: '["compose.yaml"]'
+      platforms:
+        description: Optional comma-separated platforms to verify image manifests against
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Validate Compose (${{ inputs.project-dir }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Compose contract inputs
+        id: contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          FILES_JSON: ${{ inputs.files }}
+          PLATFORMS: ${{ inputs.platforms }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          project = Path(os.environ['PROJECT_DIR'])
+          if project.is_absolute() or '..' in project.parts or not (root / project).resolve().is_relative_to(root) or not (root / project).is_dir():
+              raise SystemExit('project-dir must be an existing directory inside the repository')
+          files = json.loads(os.environ['FILES_JSON'])
+          if not isinstance(files, list) or not files or not all(isinstance(f, str) and f for f in files):
+              raise SystemExit('files must be a non-empty JSON array of filenames')
+          resolved = []
+          for f in files:
+              p = Path(f)
+              target = (root / project / p).resolve()
+              if p.is_absolute() or '..' in p.parts or not target.is_relative_to((root / project).resolve()) or not target.is_file():
+                  raise SystemExit(f'Compose file must exist inside project-dir: {f}')
+              resolved.append(p.as_posix())
+          platforms = os.environ['PLATFORMS']
+          if platforms and not re.fullmatch(r'linux/(amd64|arm64|arm/v7)(,linux/(amd64|arm64|arm/v7))*', platforms):
+              raise SystemExit('Unsupported platforms')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write(f'files={json.dumps(resolved)}\n')
+          PY
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Validate Docker Compose configuration and image platforms
+        working-directory: ${{ inputs.project-dir }}
+        env:
+          FILES_JSON: ${{ steps.contract.outputs.files }}
+          PLATFORMS: ${{ inputs.platforms }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess, sys
+          files = json.loads(os.environ['FILES_JSON'])
+          cmd = ['docker', 'compose']
+          for f in files:
+              cmd.extend(['-f', f])
+          rendered = subprocess.run([*cmd, 'config', '--format', 'json'], capture_output=True, text=True)
+          if rendered.returncode != 0:
+              print(rendered.stderr, file=sys.stderr)
+              raise SystemExit(f'docker compose config failed with code {rendered.returncode}')
+          config = json.loads(rendered.stdout)
+          platforms = [p for p in os.environ['PLATFORMS'].split(',') if p]
+          if platforms:
+              images = sorted({svc['image'] for svc in config.get('services', {}).values() if svc.get('image') and '${' not in svc['image']})
+              for image in images:
+                  ref = image.split('@sha256:')[0]
+                  inspect = subprocess.run(['docker', 'buildx', 'imagetools', 'inspect', ref], capture_output=True, text=True)
+                  if inspect.returncode != 0:
+                      print(inspect.stderr, file=sys.stderr)
+                      raise SystemExit(f'docker buildx imagetools inspect failed for {ref}')
+                  for platform in platforms:
+                      if platform not in inspect.stdout:
+                          raise SystemExit(f'Image {ref} does not advertise required platform {platform}')
+          PY
