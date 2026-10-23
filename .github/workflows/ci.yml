@@ -287,11 +287,11 @@ jobs:
                   require(all(isinstance(arg, str) and bool(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=[^\r\n]*', arg)) for arg in values['build-args']), 'Docker build-args must be KEY=value strings without secrets')
                   dockerfiles.append({'dockerfile': name, 'build_context': values['build-context'], 'platforms': values['platforms'], 'target': values['target'], 'build_args': '\n'.join(values['build-args']), 'paths': values.get('paths', [])})
           
-          compose_dirs = sorted({p.parent for p in entries if p.name in {'compose.yaml', 'compose.yml'}} | {Path(local(d, directory=True)) for d in config.get('compose', {})})
+          compose_dirs = sorted({p.parent for p in entries if p.name in {'compose.yaml', 'compose.yml'} and '.github' not in p.parts} | {Path(local(d, directory=True)) for d in config.get('compose', {})})
           for directory in compose_dirs:
               name = directory.as_posix()
               seen['compose'].add(name)
-              default_files = [n for n in ('compose.yaml', 'compose.yml', 'docker-compose.yaml', 'docker-compose.yml', 'compose.prod.yaml', 'compose.prod.yml') if (directory / n).is_file()]
+              default_files = [n for n in ('compose.yaml', 'compose.yml', 'compose.prod.yaml', 'compose.prod.yml', 'docker-compose.yaml', 'docker-compose.yml') if (directory / n).is_file()]
               values = options('compose', name, {'files': default_files, 'platforms': ''})
               require(isinstance(values['files'], list) and values['files'] and all(isinstance(f, str) and f for f in values['files']), f'compose.{name}.files must be a non-empty array of filenames')
               for f in values['files']:
@@ -300,7 +300,7 @@ jobs:
                   require(bool(re.fullmatch(r'linux/(amd64|arm64|arm/v7)(,linux/(amd64|arm64|arm/v7))*', values['platforms'])), f'Unsupported compose platforms in {name}')
               compose_projects.append({'project_dir': name, 'files': values['files'], 'platforms': values['platforms'], 'paths': values.get('paths', [])})
           
-          tf_entries = [p for p in entries if (p.suffix == '.tf' or p.name.endswith('.tm.hcl')) and '.terraform' not in p.parts]
+          tf_entries = [p for p in entries if (p.suffix == '.tf' or p.name.endswith('.tm.hcl')) and '.terraform' not in p.parts and '.github' not in p.parts]
           if tf_entries:
               tf_roots = sorted(config.get('terraform', {})) or ['.']
               for name in tf_roots:
