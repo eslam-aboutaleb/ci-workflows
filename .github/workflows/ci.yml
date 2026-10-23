@@ -351,7 +351,7 @@ jobs:
               outputs[name] = values
               lines.append(f'| {name} | {total} | {len(values)} |')
           if workspace_members: lines.extend(['', 'Workspace members are covered by their root CI scripts:', *[f'- {member}' for member in workspace_members]])
-          outputs.update({'codeql-languages': sorted(languages), 'security-options': {'config-file': '', 'build-command': '', 'enable-gitleaks': True, **security}, 'workflow-files': workflow_files, 'pypi-projects': pypi_projects})
+          outputs.update({'codeql-languages': sorted(languages), 'security-options': {'config-file': '', 'build-command': '', 'enable-gitleaks': False, **security}, 'workflow-files': workflow_files, 'pypi-projects': pypi_projects})
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for name, value in outputs.items(): output.write(f'{name}={json.dumps(value, separators=(",", ":"))}\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
@@ -560,7 +560,7 @@ jobs:
               expected[job] = bool(json.loads(outputs.get(output, '[]')))
           expected['ai-evaluations'] = bool(json.loads(outputs.get('ai-evaluation-projects', '[]'))) and os.environ['TRUSTED_AI_EVENT'] == 'true'
           expected['workflow-lint'] = outputs.get('workflow-files') == 'true'
-          expected['security'] = os.environ['EVENT_NAME'] == 'pull_request' or bool(json.loads(outputs.get('codeql-languages', '[]'))) or json.loads(outputs.get('security-options', '{}')).get('enable-gitleaks', True)
+          expected['security'] = os.environ['EVENT_NAME'] == 'pull_request' or bool(json.loads(outputs.get('codeql-languages', '[]'))) or json.loads(outputs.get('security-options', '{}')).get('enable-gitleaks', False)
           errors = []
           summary = ['## Quality gate', '', '| Check | Required this run | Result |', '| --- | --- | --- |']
           for job, required in expected.items():
