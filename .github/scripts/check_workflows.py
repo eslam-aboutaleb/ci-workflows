@@ -27,7 +27,7 @@ def check():
         assert isinstance(workflow, dict) and workflow.get('jobs'), name
         assert workflow['permissions'] == {'contents': 'read'}, name
         assert 'pull_request_target' not in workflow['on'], name
-        if name not in {'ci.yml', 'validate.yml'}:
+        if name not in {'ci.yml', 'validate.yml', 'propagate.yml'}:
             assert set(workflow['on']) == {'workflow_call'}, name
         for job_id, job in workflow['jobs'].items():
             context = f'{name}:{job_id}'

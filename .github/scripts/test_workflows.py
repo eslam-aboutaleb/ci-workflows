@@ -300,5 +300,42 @@ class QualityGateTests(unittest.TestCase):
         self.assertNotEqual(self.gate(outputs=outputs, event='push', trusted=True), 0)
 
 
+class PropagationTests(unittest.TestCase):
+    def test_update_repo_tree_replaces_only_ci_workflows_pins(self):
+        from propagate_updates import format_pr_body, load_downstream, update_repo_tree
+        target_sha = 'a' * 40
+        old_sha_1 = '1' * 40
+        old_sha_2 = '2' * 40
+        checkout_sha = '3d3c42e5aac5ba805825da76410c181273ba90b1'
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            wf = repo / '.github/workflows/ci.yml'
+            wf.parent.mkdir(parents=True)
+            wf.write_text(
+                f'jobs:\n'
+                f'  py:\n'
+                f'    uses: eslam-aboutaleb/ci-workflows/.github/workflows/python.yml@{old_sha_1}\n'
+                f'  sec:\n'
+                f'    uses: eslam-aboutaleb/ci-workflows/.github/workflows/security.yml@{old_sha_2}\n'
+                f'  lint:\n'
+                f'    steps:\n'
+                f'      - uses: actions/checkout@{checkout_sha}\n'
+            )
+            changes = update_repo_tree(repo, target_sha)
+            self.assertEqual(
+                changes,
+                {'.github/workflows/ci.yml': [('python.yml', old_sha_1), ('security.yml', old_sha_2)]},
+            )
+            updated_text = wf.read_text()
+            self.assertIn(f'python.yml@{target_sha}', updated_text)
+            self.assertIn(f'security.yml@{target_sha}', updated_text)
+            self.assertIn(f'actions/checkout@{checkout_sha}', updated_text)
+            self.assertEqual(update_repo_tree(repo, target_sha), {})
+            body = format_pr_body(target_sha, changes)
+            self.assertIn(target_sha[:12], body)
+            self.assertIn(f'compare/{old_sha_1}...{target_sha}', body)
+        self.assertGreaterEqual(len(load_downstream()), 3)
+
+
 if __name__ == '__main__':
     unittest.main()
