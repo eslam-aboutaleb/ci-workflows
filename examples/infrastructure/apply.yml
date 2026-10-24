@@ -1,0 +1,40 @@
+name: Infrastructure apply
+on:
+  workflow_dispatch:
+    inputs:
+      plan-sha:
+        description: Full commit SHA of the reviewed default-branch plan
+        type: string
+        required: true
+      plan-run-id:
+        description: Successful source plan run ID
+        type: string
+        required: true
+      plan-artifact-id:
+        description: Exact immutable encrypted plan artifact ID
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  apply:
+    uses: eslam-aboutaleb/ci-workflows/.github/workflows/terraform-apply.yml@COMMIT_SHA
+    permissions:
+      contents: read
+      actions: read
+    with:
+      project-dir: infrastructure/stacks/oci/production
+      stack-id: oci-production
+      terraform-version: 1.12.2
+      terramate-version: 0.11.6
+      environment: production
+      backend-config: ${{ vars.TF_BACKEND_CONFIG_JSON }}
+      oci-config: ${{ vars.OCI_CONFIG_JSON }}
+      plan-sha: ${{ inputs.plan-sha }}
+      plan-run-id: ${{ inputs.plan-run-id }}
+      plan-artifact-id: ${{ inputs.plan-artifact-id }}
+      plan-workflow: .github/workflows/infra-plan.yml
+    secrets:
+      OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+      TF_VARS_JSON: ${{ secrets.TF_VARS_JSON }}
+      PLAN_ENCRYPTION_KEY: ${{ secrets.PLAN_ENCRYPTION_KEY }}

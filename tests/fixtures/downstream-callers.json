@@ -1,0 +1,82 @@
+{
+  "eslam-aboutaleb/polymarket-ai-trading": [
+    {
+      "workflow": "python.yml",
+      "with": {
+        "project-dir": "backend",
+        "manager": "uv",
+        "python-versions": "[\"3.11\"]",
+        "coverage-source": "app",
+        "coverage-min": 80
+      },
+      "secrets": {}
+    },
+    {
+      "workflow": "integration.yml",
+      "with": {
+        "project-dir": "backend",
+        "python-version": "3.11"
+      },
+      "secrets": {}
+    },
+    {
+      "workflow": "browser.yml",
+      "with": {
+        "project-dir": "frontend",
+        "manager": "npm",
+        "node-version": "20",
+        "test-script": "test:safety",
+        "browsers": "chromium"
+      },
+      "secrets": {}
+    },
+    {
+      "workflow": "workflow-lint.yml",
+      "with": {},
+      "secrets": {}
+    },
+    {
+      "workflow": "security.yml",
+      "with": {
+        "languages": "[\"python\", \"javascript-typescript\", \"actions\"]",
+        "dependency-severity": "high"
+      },
+      "secrets": {}
+    }
+  ],
+  "eslam-aboutaleb/ragnor": [
+    {
+      "workflow": "python.yml",
+      "with": {
+        "project-dir": ".",
+        "manager": "pip",
+        "pip-extras": "test",
+        "python-versions": "[\"3.11\", \"3.12\"]",
+        "coverage-source": "src/ragnor",
+        "coverage-min": 85,
+        "build-distribution": "true"
+      },
+      "secrets": {}
+    },
+    {
+      "workflow": "security.yml",
+      "with": {
+        "languages": "[\"python\", \"actions\"]",
+        "config-file": ".github/codeql-config.yml"
+      },
+      "secrets": {}
+    },
+    {
+      "workflow": "workflow-lint.yml",
+      "with": {},
+      "secrets": {}
+    }
+  ],
+  "eslam-aboutaleb/llm-gateway": [
+    {
+      "workflow": "ci.yml",
+      "with": {},
+      "secrets": {}
+    }
+  ]
+}

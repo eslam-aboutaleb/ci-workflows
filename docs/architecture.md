@@ -1,0 +1,98 @@
+# Repository architecture
+
+The repository has two public interfaces: reusable workflows and composite actions.
+Existing workflow paths and the configuration schema remain stable.
+
+```text
+.github/
+  workflows/                 Stable, flat GitHub Actions entry points
+    ci.yml                   Existing aggregate quality pipeline
+    python.yml, node.yml…    Existing individual quality checks
+    image-verification.yml   Opt-in image inventory, signatures, SBOM and CVE checks
+    terraform-plan.yml       Opt-in encrypted remote-state planning
+    terraform-apply.yml      Opt-in reviewed-plan application
+    terraform-drift.yml      Opt-in remote-state drift detection
+    validate.yml             Repository contract tests and Actionlint
+    operations-smoke.yml     Real local Terraform and public image smoke tests
+    propagate.yml            Existing downstream update automation
+  actions/
+    image-inventory/         Compose parsing, immutable digests, platform matrix
+    setup-oci/               Isolated OCI API-key credentials and cleanup
+    terraform-operation/     Shared execution, provenance and plan encryption
+  ci.schema.json             Stable public schema URL
+  downstream.json            Existing downstream registration
+  examples/                  Existing adoption examples; paths retained
+  scripts/                   Compatibility entry points for old maintenance commands
+scripts/maintenance/         Canonical contract checker and propagation implementation
+tests/                       Unit, integration and compatibility regressions
+  fixtures/                  Previous public workflow contracts and downstream calls
+examples/
+  infrastructure/            Consumer plan/apply/drift callers
+  images/                    Consumer image verification caller
+docs/                        Architecture, operations contracts and migration guidance
+requirements/ci.txt          Repository test dependencies
+Makefile                     Root maintenance commands
+```
+
+GitHub requires reusable workflows directly inside `.github/workflows`; subfolders
+are unsupported. Keep that directory flat and organize implementation code and
+documentation by responsibility. See [GitHub's reusable workflow documentation](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
+
+## Boundaries
+
+Quality checks remain secret-free unless a consumer explicitly enables an existing
+credentialed feature. Infrastructure operations are separate explicit calls and
+are never discovered or enabled by the aggregate quality pipeline. No new
+configuration fields, permissions or environments are required by existing callers.
+
+The consumer owns triggers, schedules, stack paths, backend settings, variables,
+GitHub environment protection rules, credentials, image trust policy, notifications
+and application-specific commands. This repository owns reusable execution and
+validation. Gateway deployment, LiteLLM administration, backups, recovery runbooks
+and application smoke assertions belong in the gateway repository.
+
+Reusable workflows check out the consumer's code. A local `./.github/actions/...`
+reference inside one would resolve against that consumer checkout. Therefore the
+new shared workflows use explicit SHA-pinned references to this repository's
+composite actions. An action's Python helpers resolve relative to
+`GITHUB_ACTION_PATH`, so they come from the pinned action revision rather than
+from consumer-controlled paths. Repository smoke tests deliberately use local
+action references to test the current implementation.
+
+## Compatibility and releases
+
+- Preserve existing workflow filenames, required inputs, defaults, outputs,
+  permission contracts and check names. Regression fixtures record the previous
+  public interfaces. Existing aggregate and individual quality implementations
+  remain unchanged in this migration.
+- Introduce capabilities through new opt-in workflows. Do not add production
+  credentials or infrastructure operations to discovery or the quality gate.
+- Retain `.github/ci.schema.json`, `.github/downstream.json`, `.github/examples/`,
+  the old maintenance script commands and `.github/requirements-ci.txt` URLs.
+- When updating shared action code, commit the action implementation first, then
+  update the affected workflows' full SHA pins to that commit. Keep both commits
+  reachable in the PR branch. Do not squash away a commit used by an action pin.
+  Dependabot can subsequently propose dependency pin updates.
+- Run `make ci-quality lint`, then require the repository's GitHub validation and
+  operation smoke tests. Consumers adopt the reviewed workflow commit separately.
+  The existing propagation bot proposes downstream pin-update PRs after a main
+  push; it does not merge them.
+
+## Local maintenance
+
+Use Python 3.11 or later and Actionlint 1.7.12 or later:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+make ci-install
+make ci-quality lint
+```
+
+The tests exercise discovery, required-check failures, legacy commands, public
+contracts, every image in Compose, exact digest inspection, API provenance,
+plan/apply behavior and authenticated artifact encryption. Hosted smoke tests use
+disposable local and loopback HTTP Terraform state, fresh checkouts with a simulated
+provider release, and repeated public multi-platform image scans; they need
+no cloud credentials. Cloud-specific backend access still requires a consumer
+integration run with its own environment and credentials.

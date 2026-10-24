@@ -1,0 +1,170 @@
+name: Image security verification
+
+on:
+  workflow_call:
+    inputs:
+      images:
+        description: JSON array of images; empty discovers all rendered Compose service images
+        type: string
+        default: '[]'
+      project-dir:
+        description: Directory containing Compose files in the consuming repository
+        type: string
+        default: .
+      files:
+        description: JSON array of Compose filenames relative to project-dir
+        type: string
+        default: '["compose.yaml"]'
+      platforms:
+        description: Required comma-separated Linux platforms; each is independently scanned
+        type: string
+        default: linux/arm64
+      severity:
+        description: Comma-separated vulnerability severities that fail verification
+        type: string
+        default: HIGH,CRITICAL
+      upload-sarif:
+        description: Also upload SARIF to GitHub code scanning when supported
+        type: boolean
+        default: false
+      verify-signatures:
+        description: Require a Cosign signature using the supplied public key or exact identity and issuer
+        type: boolean
+        default: false
+      cosign-key:
+        description: Repository-relative public key file; mutually exclusive with certificate identity/issuer
+        type: string
+        default: ''
+      certificate-identity:
+        description: Exact trusted keyless certificate identity
+        type: string
+        default: ''
+      certificate-oidc-issuer:
+        description: Exact trusted keyless certificate OIDC issuer
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: Resolve immutable image inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
+      artifact-scope: ${{ steps.inventory.outputs.artifact-scope }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate verification policy
+        env:
+          SEVERITY: ${{ inputs.severity }}
+          VERIFY: ${{ inputs.verify-signatures }}
+          KEY: ${{ inputs.cosign-key }}
+          IDENTITY: ${{ inputs.certificate-identity }}
+          ISSUER: ${{ inputs.certificate-oidc-issuer }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re
+          from pathlib import Path
+          assert re.fullmatch(r'(UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL)(,(UNKNOWN|LOW|MEDIUM|HIGH|CRITICAL))*', os.environ['SEVERITY']), 'Invalid severity'
+          key, identity, issuer = (os.environ[name] for name in ('KEY', 'IDENTITY', 'ISSUER'))
+          if os.environ['VERIFY'] == 'true':
+              assert (bool(key) and not identity and not issuer) or (not key and bool(identity) and bool(issuer)), 'Signature verification requires a public key OR both exact certificate identity and issuer'
+              if key:
+                  path = Path(key)
+                  assert not path.is_absolute() and '..' not in path.parts and path.resolve().is_relative_to(Path.cwd().resolve()) and path.is_file(), 'Public key must exist inside the consumer checkout'
+          else:
+              assert not any((key, identity, issuer)), 'Enable verify-signatures to apply the supplied trust policy'
+          PY
+      - name: Discover and validate every image/platform
+        id: inventory
+        uses: eslam-aboutaleb/ci-workflows/.github/actions/image-inventory@f2a9e48392eaf6dc3e4f7fce9252cb5bf0056cf5
+        with:
+          images: ${{ inputs.images }}
+          project-dir: ${{ inputs.project-dir }}
+          files: ${{ inputs.files }}
+          platforms: ${{ inputs.platforms }}
+
+  verify:
+    name: Verify image (${{ matrix.id }}, ${{ matrix.platform }})
+    needs: inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.inventory.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        if: inputs.verify-signatures
+      - name: Verify signature of the immutable image
+        if: inputs.verify-signatures
+        env:
+          IMAGE: ${{ matrix.image }}
+          KEY: ${{ inputs.cosign-key }}
+          IDENTITY: ${{ inputs.certificate-identity }}
+          ISSUER: ${{ inputs.certificate-oidc-issuer }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, subprocess
+          args = ['cosign', 'verify']
+          if os.environ['KEY']:
+              args.extend(['--key', os.environ['KEY']])
+          else:
+              args.extend(['--certificate-identity', os.environ['IDENTITY'], '--certificate-oidc-issuer', os.environ['ISSUER']])
+          subprocess.run([*args, os.environ['IMAGE']], check=True)
+          PY
+      - name: Generate an image SBOM
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          version: v0.75.0
+          image-ref: ${{ matrix.image }}
+          format: spdx-json
+          output: sbom.spdx.json
+          scanners: vuln
+          exit-code: '0'
+      - name: Scan every image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: ${{ matrix.platform }}
+        with:
+          version: v0.75.0
+          image-ref: ${{ matrix.image }}
+          format: sarif
+          output: vulnerabilities.sarif
+          scanners: vuln
+          severity: ${{ inputs.severity }}
+          limit-severities-for-sarif: true
+          ignore-unfixed: false
+          exit-code: '1'
+      - name: Retain SBOM and vulnerability report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: image-verification-${{ needs.inventory.outputs.artifact-scope }}-${{ matrix.id }}
+          path: |
+            sbom.spdx.json
+            vulnerabilities.sarif
+          retention-days: 7
+          if-no-files-found: error
+      - name: Upload vulnerability SARIF
+        if: always() && inputs.upload-sarif && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        with:
+          sarif_file: vulnerabilities.sarif
+          category: image-${{ matrix.id }}

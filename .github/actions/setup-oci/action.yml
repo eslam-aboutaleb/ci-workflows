@@ -1,0 +1,38 @@
+name: Configure OCI credentials
+description: Isolated API-key authentication for OCI CLI and Terraform; installs no CLI
+inputs:
+  config:
+    description: JSON object containing user, tenancy, fingerprint, region
+    default: ''
+  api-key:
+    description: PEM API signing key; pass a named Actions secret
+    default: ''
+  key-passphrase:
+    description: 64-character random hexadecimal named secret; supply it as an environment variable to the consuming operation too
+    default: ''
+  cleanup:
+    description: Set true in an always() step after using the credentials
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      if: inputs.cleanup != 'true'
+      with:
+        python-version: '3.12'
+    - name: Install credential encryption dependency
+      if: inputs.cleanup != 'true'
+      shell: bash
+      run: python3 -m pip install 'cryptography==50.0.2'
+    - name: Configure isolated OCI credentials
+      if: inputs.cleanup != 'true'
+      shell: bash
+      env:
+        OCI_CONFIG_JSON: ${{ inputs.config }}
+        OCI_API_KEY: ${{ inputs.api-key }}
+        OCI_KEY_PASSPHRASE: ${{ inputs.key-passphrase }}
+      run: python3 "$GITHUB_ACTION_PATH/configure.py"
+    - name: Remove OCI credential files
+      if: inputs.cleanup == 'true'
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/configure.py" cleanup

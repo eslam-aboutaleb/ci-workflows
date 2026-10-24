@@ -1,0 +1,169 @@
+name: Terraform operation
+description: Shared plan, apply, drift and reviewed-plan provenance engine
+inputs:
+  operation:
+    description: verify, plan, apply, or drift
+    required: true
+  project-dir:
+    description: Terraform stack directory in the consumer checkout
+    default: .
+  stack-id:
+    description: Stable stack identifier
+    default: default
+  terraform-version:
+    description: Exact Terraform version
+    default: 1.12.2
+  terramate-version:
+    description: Exact Terramate version; empty disables generation
+    default: ''
+  backend-config:
+    description: JSON object of nonsecret backend settings
+    default: '{}'
+  tf-vars:
+    description: JSON object of variables; pass a named secret for sensitive values
+    default: '{}'
+  oci-config:
+    description: Optional OCI identity JSON; empty disables OCI authentication
+    default: ''
+  oci-api-key:
+    description: OCI API signing key from a named secret
+    default: ''
+  plan-sha:
+    description: Approved source commit
+    default: ''
+  plan-run-id:
+    description: Successful approved plan run ID
+    default: ''
+  plan-artifact-id:
+    description: Immutable plan artifact ID
+    default: ''
+  plan-workflow:
+    description: Expected caller workflow path for the plan
+    default: ''
+  checkout-reviewed:
+    description: After API provenance verification, require default-branch ancestry and check out that exact commit
+    default: 'false'
+  plan-dir:
+    description: Downloaded reviewed plan directory for apply
+    default: ''
+  plan-encryption-key:
+    description: 64-character random hexadecimal key from a named secret
+    default: ''
+outputs:
+  plan-dir:
+    description: Plan artifact directory
+    value: ${{ steps.operation.outputs.plan-dir }}
+  has-changes:
+    description: Whether the plan changes infrastructure
+    value: ${{ steps.operation.outputs.has-changes }}
+  plan-sha:
+    description: Verified approved source commit
+    value: ${{ steps.operation.outputs.plan-sha }}
+  verified-revision:
+    description: Commit proven to belong to the successful approved default-branch plan run and artifact
+    value: ${{ steps.operation.outputs.plan-sha }}
+runs:
+  using: composite
+  steps:
+    - name: Validate tool versions and stack identifier
+      shell: bash
+      env:
+        TERRAFORM_VERSION: ${{ inputs.terraform-version }}
+        TERRAMATE_VERSION: ${{ inputs.terramate-version }}
+        STACK_ID: ${{ inputs.stack-id }}
+        OPERATION: ${{ inputs.operation }}
+        PLAN_DIR: ${{ inputs.plan-dir }}
+        PLAN_ENCRYPTION_KEY: ${{ inputs.plan-encryption-key }}
+      run: |
+        python3 - <<'PY'
+        import os, re
+        from pathlib import Path
+        assert os.environ['OPERATION'] in {'verify', 'plan', 'apply', 'drift'}, 'Invalid operation'
+        assert re.fullmatch(r'\d+\.\d+\.\d+', os.environ['TERRAFORM_VERSION']), 'Pin an exact Terraform version'
+        assert not os.environ['TERRAMATE_VERSION'] or re.fullmatch(r'\d+\.\d+\.\d+', os.environ['TERRAMATE_VERSION']), 'Pin an exact Terramate version'
+        assert re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', os.environ['STACK_ID']), 'Invalid stack-id'
+        if os.environ['OPERATION'] != 'verify':
+            path = Path(os.environ['PLAN_DIR'])
+            root = Path(os.environ['RUNNER_TEMP']).resolve()
+            assert path.is_absolute() and path.resolve() != root and path.resolve().is_relative_to(root), 'plan-dir must be under RUNNER_TEMP'
+            assert re.fullmatch(r'[0-9a-fA-F]{64}', os.environ['PLAN_ENCRYPTION_KEY']), 'Provide PLAN_ENCRYPTION_KEY as a named secret'
+        PY
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      if: inputs.operation != 'verify'
+      with:
+        python-version: '3.12'
+    - name: Install plan encryption dependency
+      if: inputs.operation != 'verify'
+      shell: bash
+      run: python3 -m pip install 'cryptography==50.0.2'
+    - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+      if: inputs.operation != 'verify'
+      with:
+        terraform_version: ${{ inputs.terraform-version }}
+        terraform_wrapper: false
+    - uses: terramate-io/terramate-action@1cc78a548efefaab7762f4d06f51aa6de06ce201 # v3
+      if: inputs.operation != 'verify' && inputs.terramate-version != ''
+      with:
+        version: ${{ inputs.terramate-version }}
+    - name: Configure OCI authentication
+      if: inputs.operation != 'verify' && inputs.oci-config != ''
+      shell: bash
+      env:
+        OCI_CONFIG_JSON: ${{ inputs.oci-config }}
+        OCI_API_KEY: ${{ inputs.oci-api-key }}
+        OCI_KEY_PASSPHRASE: ${{ inputs.plan-encryption-key }}
+      run: python3 "$GITHUB_ACTION_PATH/../setup-oci/configure.py"
+    - name: Decrypt reviewed plan
+      if: inputs.operation == 'apply'
+      shell: bash
+      env:
+        PLAN_DIR: ${{ inputs.plan-dir }}
+        PLAN_ENCRYPTION_KEY: ${{ inputs.plan-encryption-key }}
+      run: python3 "$GITHUB_ACTION_PATH/protect.py" decrypt
+    - name: Execute Terraform contract
+      id: operation
+      shell: bash
+      env:
+        OPERATION: ${{ inputs.operation }}
+        PROJECT_DIR: ${{ inputs.project-dir }}
+        STACK_ID: ${{ inputs.stack-id }}
+        TERRAFORM_VERSION: ${{ inputs.terraform-version }}
+        TERRAMATE_VERSION: ${{ inputs.terramate-version }}
+        BACKEND_CONFIG: ${{ inputs.backend-config }}
+        TF_VARS_JSON: ${{ inputs.tf-vars }}
+        OCI_PRIVATE_KEY_PASSWORD: ${{ inputs.plan-encryption-key }}
+        OCI_CLI_PASSPHRASE: ${{ inputs.plan-encryption-key }}
+        PLAN_SHA: ${{ inputs.plan-sha }}
+        PLAN_RUN_ID: ${{ inputs.plan-run-id }}
+        PLAN_ARTIFACT_ID: ${{ inputs.plan-artifact-id }}
+        PLAN_WORKFLOW: ${{ inputs.plan-workflow }}
+        CHECKOUT_REVIEWED: ${{ inputs.checkout-reviewed }}
+        PLAN_DIR: ${{ inputs.plan-dir }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        CALLER_REF: ${{ github.ref }}
+        CALLER_REF_PROTECTED: ${{ github.ref_protected }}
+      run: python3 "$GITHUB_ACTION_PATH/operation.py"
+    - name: Encrypt plan and diagnostic artifacts
+      if: always() && (inputs.operation == 'plan' || inputs.operation == 'drift')
+      shell: bash
+      env:
+        PLAN_DIR: ${{ inputs.plan-dir }}
+        PLAN_ENCRYPTION_KEY: ${{ inputs.plan-encryption-key }}
+      run: python3 "$GITHUB_ACTION_PATH/protect.py" encrypt
+    - name: Remove decrypted reviewed plan
+      if: always() && inputs.operation == 'apply'
+      shell: bash
+      env:
+        PLAN_DIR: ${{ inputs.plan-dir }}
+      run: |
+        python3 - <<'PY'
+        import os
+        from pathlib import Path
+        directory = Path(os.environ['PLAN_DIR'])
+        for name in ('tfplan', 'manifest.json', 'plan.txt', '.terraform.lock.hcl'):
+            (directory / name).unlink(missing_ok=True)
+        PY
+    - name: Remove OCI credential files
+      if: always() && inputs.operation != 'verify' && inputs.oci-config != ''
+      shell: bash
+      run: python3 "$GITHUB_ACTION_PATH/../setup-oci/configure.py" cleanup

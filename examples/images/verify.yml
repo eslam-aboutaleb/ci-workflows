@@ -1,0 +1,26 @@
+name: Verify gateway images
+on:
+  pull_request:
+    paths: ['gateway/compose*.yaml', '.github/workflows/images.yml']
+  push:
+    branches: [main]
+    paths: ['gateway/compose*.yaml', '.github/workflows/images.yml']
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  images:
+    uses: eslam-aboutaleb/ci-workflows/.github/workflows/image-verification.yml@COMMIT_SHA
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      project-dir: gateway
+      files: '["compose.yaml", "compose.prod.yaml"]'
+      platforms: linux/arm64
+      severity: HIGH,CRITICAL
+      upload-sarif: true
+      # Add explicit verify-signatures and signing policy after reviewing
+      # each selected image's upstream signing authority.

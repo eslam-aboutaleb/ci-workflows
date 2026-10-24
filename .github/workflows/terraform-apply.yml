@@ -1,0 +1,117 @@
+name: Terraform apply
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Terraform stack directory in the consuming repository
+        type: string
+        required: true
+      stack-id:
+        description: Stable stack identifier used for artifacts and state operation concurrency
+        type: string
+        required: true
+      terraform-version:
+        description: Exact Terraform version
+        type: string
+        default: 1.12.2
+      terramate-version:
+        description: Exact Terramate version; empty disables generation
+        type: string
+        default: ''
+      backend-config:
+        description: JSON object of nonsecret backend settings
+        type: string
+        default: '{}'
+      oci-config:
+        description: 'Optional JSON object: user, tenancy, fingerprint, region'
+        type: string
+        default: ''
+      environment:
+        description: Consumer-owned GitHub environment; configure its protection rules before adoption
+        type: string
+        required: true
+      plan-sha:
+        description: Full commit SHA of the approved plan
+        type: string
+        required: true
+      plan-run-id:
+        description: Successful trusted default-branch plan run ID
+        type: string
+        required: true
+      plan-artifact-id:
+        description: Immutable encrypted plan artifact ID
+        type: string
+        required: true
+      plan-workflow:
+        description: Expected caller workflow path, e.g. .github/workflows/infra-plan.yml
+        type: string
+        required: true
+    secrets:
+      OCI_API_KEY:
+        description: Optional OCI API signing key when oci-config is set
+        required: false
+      TF_VARS_JSON:
+        description: JSON object of Terraform input variables
+        required: false
+      PLAN_ENCRYPTION_KEY:
+        description: 64-character random hexadecimal encryption key shared by plan and apply
+        required: true
+permissions:
+  contents: read
+jobs:
+  operation:
+    name: Terraform apply (${{ inputs.stack-id }})
+    if: github.event_name == 'workflow_dispatch' && github.ref_protected && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: terraform-state-${{ github.repository }}-${{ inputs.stack-id }}
+      cancel-in-progress: false
+    steps:
+    # The job guard limits this default checkout to a protected manual run.
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Verify approved plan provenance
+      id: source
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@f2a9e48392eaf6dc3e4f7fce9252cb5bf0056cf5
+      env:
+        GH_TOKEN: ${{ github.token }}
+      with:
+        operation: verify
+        checkout-reviewed: 'true'
+        stack-id: ${{ inputs.stack-id }}
+        plan-sha: ${{ inputs.plan-sha }}
+        plan-run-id: ${{ inputs.plan-run-id }}
+        plan-artifact-id: ${{ inputs.plan-artifact-id }}
+        plan-workflow: ${{ inputs.plan-workflow }}
+    - name: Download the exact reviewed plan artifact
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        artifact-ids: ${{ inputs.plan-artifact-id }}
+        run-id: ${{ inputs.plan-run-id }}
+        github-token: ${{ github.token }}
+        path: ${{ runner.temp }}/terraform-plan
+        merge-multiple: true
+    - name: Execute apply
+      id: terraform
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@f2a9e48392eaf6dc3e4f7fce9252cb5bf0056cf5
+      with:
+        operation: apply
+        project-dir: ${{ inputs.project-dir }}
+        stack-id: ${{ inputs.stack-id }}
+        terraform-version: ${{ inputs.terraform-version }}
+        terramate-version: ${{ inputs.terramate-version }}
+        backend-config: ${{ inputs.backend-config }}
+        oci-config: ${{ inputs.oci-config }}
+        oci-api-key: ${{ secrets.OCI_API_KEY }}
+        tf-vars: ${{ secrets.TF_VARS_JSON || '{}' }}
+        plan-encryption-key: ${{ secrets.PLAN_ENCRYPTION_KEY }}
+        plan-dir: ${{ runner.temp }}/terraform-plan
+        plan-sha: ${{ steps.source.outputs.verified-revision }}
+        plan-run-id: ${{ inputs.plan-run-id }}

@@ -1,5 +1,9 @@
 # Shared CI workflows
 
+**Documentation:** [Architecture and folders](docs/architecture.md) ·
+[Shared image and infrastructure operations](docs/shared-operations.md) ·
+[Gateway migration](docs/gateway-migration.md) · [Consumer examples](examples/)
+
 A central GitHub Actions quality pipeline for repositories with Python, Node.js, browser tests, Docker images, or project-owned Makefile checks. Consuming repositories pin one workflow revision; discovery selects the matching checks, and **Quality gate** fails if any required check fails, is cancelled, or is unexpectedly skipped.
 
 ## Adopt in a repository
@@ -130,6 +134,10 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 | [docker.yml](.github/workflows/docker.yml) | None | Dockerfile build checks and image builds, optional stages/platforms/arguments, scoped BuildKit cache; no registry credentials |
 | [compose.yml](.github/workflows/compose.yml) | None | Docker Compose configuration validation and optional multi-arch image manifest verification |
 | [terraform.yml](.github/workflows/terraform.yml) | `project-dir` | Terraform format/validate across modules and stacks, plus Terramate format and generation drift checks |
+| [image-verification.yml](.github/workflows/image-verification.yml) | Explicit images or Compose files | Opt-in immutable image/platform checks, image SBOMs, vulnerability scans and optional Cosign verification |
+| [terraform-plan.yml](.github/workflows/terraform-plan.yml) | `project-dir`, `stack-id`; named encryption secret | Opt-in remote-state plan with encrypted, short-lived artifacts |
+| [terraform-apply.yml](.github/workflows/terraform-apply.yml) | Stack, environment and approved plan identity; named encryption secret | Verify run/artifact/commit provenance and apply the exact reviewed binary; never replan |
+| [terraform-drift.yml](.github/workflows/terraform-drift.yml) | `project-dir`, `stack-id`; named encryption secret | Opt-in drift output, encrypted diagnostics and configurable failure on drift |
 | [project-check.yml](.github/workflows/project-check.yml) | `project-dir`, `target` | Run `ci-install`, then the chosen Make target; optional generated-file drift check |
 | [integration.yml](.github/workflows/integration.yml) | `project-dir` | Healthy PostgreSQL/Redis services, install, migrate, integration tests |
 | [ai-eval.yml](.github/workflows/ai-eval.yml) | `project-dir` | Install Python/Node/uv tooling, run `ci-eval`; optional named provider key |
@@ -139,6 +147,13 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 | [publish-pypi.yml](.github/workflows/publish-pypi.yml) | `project-dir`, `distribution-name` | Match release tag to package metadata, build/check distributions, approved publication using `PYPI_API_TOKEN` |
 | [validate.yml](.github/workflows/validate.yml) | Repository maintenance only | Actionlint, shared contract checks, discovery and gate regression tests |
 | [propagate.yml](.github/workflows/propagate.yml) | Repository maintenance only | Automatically open PRs updating pinned `ci-workflows` SHAs across downstream repositories listed in `.github/downstream.json` |
+| [operations-smoke.yml](.github/workflows/operations-smoke.yml) | Repository maintenance only | Real local-state Terraform plan/apply and public multi-platform image verification |
+
+The new image and remote-state workflows are separate explicit calls. They do not
+change discovery, `.github/ci.json`, existing workflow defaults, the quality gate,
+or existing callers' required permissions. Infrastructure credentials, schedules,
+environment protection and notification policy belong to the consuming repository.
+See the [operations contracts](docs/shared-operations.md) before enabling them.
 
 Python uv projects must lock Ruff, pytest and pytest-cov when coverage is enabled. pip projects use an editable install; install test extras or provide a constraints file as appropriate. Node projects must define noninteractive `lint`, `typecheck`, `test`, and `build` scripts. Audits fail at `high` by default; use `moderate` for a stricter threshold. Bun must have an exact runtime version in `packageManager: bun@<version>` or `bun-version`. pnpm uses `packageManager` or an explicit `pnpm-version`.
 
@@ -232,10 +247,15 @@ External actions use full commit SHAs. Dependabot proposes action updates weekly
 Run the repository's maintenance checks locally with Python, PyYAML, Go and actionlint available:
 
 ```sh
-python3 -m pip install -r .github/requirements-ci.txt
-python3 .github/scripts/check_workflows.py
-python3 -m unittest discover -s .github/scripts -p 'test_*.py' -v
-actionlint -color .github/workflows/*.yml
+make ci-install
+make ci-quality lint
 ```
 
 The regression suite exercises discovery on temporary fullstack/workspace repositories, invalid configurations, change filtering, and required-check failures. Workflow syntax and fixture tests do not replace a real GitHub Actions run against a representative consuming repository. Review the selected-check summary, enable the ruleset, and update consuming SHA pins deliberately.
+
+Use Python 3.11 or later. Maintenance implementation lives in `scripts/maintenance/`
+and regression tests in `tests/`; the former `.github/scripts/` commands and
+`.github/requirements-ci.txt` remain compatible entry points. Existing reusable
+workflow paths and the public schema URL remain stable. The
+[architecture guide](docs/architecture.md) describes dependency pinning and the
+folder boundaries.

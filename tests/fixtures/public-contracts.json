@@ -1,0 +1,555 @@
+{
+  "ai-eval.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "description": "Directory containing the evaluation Makefile, relative to repository root",
+          "required": "true",
+          "type": "string"
+        },
+        "target": {
+          "description": "Make target that installs and runs the project's AI evaluations",
+          "required": "false",
+          "type": "string",
+          "default": "ci-eval"
+        }
+      },
+      "secrets": {
+        "ai-eval-api-key": {
+          "description": "Optional provider key exposed to the evaluation target as AI_EVAL_API_KEY",
+          "required": "false"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "evaluate": "AI evaluation suite"
+    }
+  },
+  "browser.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "required": "true",
+          "type": "string"
+        },
+        "manager": {
+          "description": "npm, pnpm, or bun",
+          "required": "true",
+          "type": "string"
+        },
+        "node-version": {
+          "type": "string",
+          "default": "22"
+        },
+        "pnpm-version": {
+          "type": "string",
+          "default": ""
+        },
+        "bun-version": {
+          "description": "Exact Bun version; otherwise use packageManager",
+          "type": "string",
+          "default": ""
+        },
+        "test-script": {
+          "description": "Project-owned Playwright or visual regression script",
+          "type": "string",
+          "default": "test:e2e"
+        },
+        "browsers": {
+          "description": "Space-separated Playwright browser binaries to install",
+          "type": "string",
+          "default": "chromium"
+        },
+        "shards": {
+          "description": "Number of Playwright shards; scripts must accept --shard when greater than one",
+          "type": "number",
+          "default": 1
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "validate": "Validate browser contract",
+      "playwright": "Browser regression / shard ${{ matrix.shard }}"
+    }
+  },
+  "ci.yml": {
+    "workflow_call": {
+      "inputs": {
+        "config-file": {
+          "description": "Optional CI configuration file in the consuming repository",
+          "type": "string",
+          "default": ".github/ci.json"
+        },
+        "changes-only": {
+          "description": "On pull requests, filter only projects with explicit paths configured",
+          "type": "boolean",
+          "default": "false"
+        }
+      },
+      "secrets": {
+        "PYPI_API_TOKEN": {
+          "description": "Optional PyPI token required when a project enables release publication",
+          "required": "false"
+        },
+        "AI_EVAL_API_KEY": {
+          "description": "Optional provider key for trusted default-branch AI evaluations",
+          "required": "false"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "discover": "Discover project checks",
+      "python": "Python (${{ matrix.project.project_dir }})",
+      "node": "Node (${{ matrix.project.project_dir }})",
+      "playwright": "Browser (${{ matrix.project.project_dir }} / ${{ matrix.project.test_script }})",
+      "docker": "Docker (${{ matrix.image.dockerfile }})",
+      "compose": "Compose (${{ matrix.project.project_dir }})",
+      "terraform": "Terraform (${{ matrix.project.project_dir }})",
+      "project-checks": "${{ matrix.check.target }} (${{ matrix.check.project_dir }})",
+      "integration": "Service integration (${{ matrix.project.project_dir }})",
+      "ai-evaluations": "AI evaluations (${{ matrix.project.project_dir }})",
+      "workflow-lint": "Workflow validation",
+      "security": "Security checks",
+      "quality-gate": "Quality gate",
+      "publish-pypi": "Publish ${{ matrix.project.distribution_name }} to PyPI"
+    }
+  },
+  "compose.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "description": "Directory containing Docker Compose files",
+          "type": "string",
+          "default": "."
+        },
+        "files": {
+          "description": "JSON array of Compose filenames relative to project-dir",
+          "type": "string",
+          "default": "[\"compose.yaml\"]"
+        },
+        "platforms": {
+          "description": "Optional comma-separated platforms to verify image manifests against",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "compose": "Validate Compose (${{ inputs.project-dir }})"
+    }
+  },
+  "docker.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "description": "Docker project directory relative to repository root",
+          "type": "string",
+          "default": "."
+        },
+        "dockerfile": {
+          "description": "Dockerfile path relative to project-dir",
+          "type": "string",
+          "default": "Dockerfile"
+        },
+        "build-context": {
+          "description": "Build context path relative to project-dir",
+          "type": "string",
+          "default": "."
+        },
+        "platforms": {
+          "description": "Comma-separated Linux platforms",
+          "type": "string",
+          "default": "linux/amd64"
+        },
+        "target": {
+          "description": "Optional Docker build stage",
+          "type": "string",
+          "default": ""
+        },
+        "build-args": {
+          "description": "Newline-separated non-secret KEY=value build arguments",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "docker-build": "Check and build Docker image"
+    }
+  },
+  "integration.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "description": "Root-relative directory containing the integration Makefile",
+          "required": "true",
+          "type": "string"
+        },
+        "python-version": {
+          "required": "false",
+          "type": "string",
+          "default": "3.12"
+        },
+        "install-uv": {
+          "required": "false",
+          "type": "boolean",
+          "default": "true"
+        },
+        "postgres-image": {
+          "description": "PostgreSQL-compatible service image, optionally pinned by digest",
+          "required": "false",
+          "type": "string",
+          "default": "postgres:16"
+        },
+        "redis-image": {
+          "description": "Redis service image",
+          "required": "false",
+          "type": "string",
+          "default": "redis:7"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "integration": "Service integration"
+    }
+  },
+  "node.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "required": "true",
+          "type": "string"
+        },
+        "manager": {
+          "description": "npm, pnpm, or bun",
+          "required": "true",
+          "type": "string"
+        },
+        "node-versions": {
+          "description": "JSON array of supported Node versions",
+          "type": "string",
+          "default": "[\"22\"]"
+        },
+        "operating-systems": {
+          "description": "JSON array of GitHub hosted runner labels",
+          "type": "string",
+          "default": "[\"ubuntu-latest\"]"
+        },
+        "test-shards": {
+          "description": "Test script must honor CI_SHARD_INDEX and CI_SHARD_TOTAL when greater than one",
+          "type": "number",
+          "default": 1
+        },
+        "pnpm-version": {
+          "description": "Optional pnpm version; otherwise use packageManager in package.json",
+          "type": "string",
+          "default": ""
+        },
+        "bun-version": {
+          "description": "Exact Bun version; otherwise use bun@<version> from packageManager",
+          "type": "string",
+          "default": ""
+        },
+        "audit-level": {
+          "description": "moderate, high, or critical",
+          "type": "string",
+          "default": "high"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "validate": "Validate Node contract",
+      "checks": "Node ${{ matrix.node }} / ${{ matrix.os }} / shard ${{ matrix.shard }}"
+    }
+  },
+  "project-check.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "description": "Directory containing the project's Makefile",
+          "required": "true",
+          "type": "string"
+        },
+        "target": {
+          "description": "Make target that performs the check after ci-install",
+          "required": "true",
+          "type": "string"
+        },
+        "check-drift": {
+          "description": "Fail on tracked changes and new unignored files after generation",
+          "type": "boolean",
+          "default": "false"
+        },
+        "python-version": {
+          "type": "string",
+          "default": "3.12"
+        },
+        "node-version": {
+          "type": "string",
+          "default": "22"
+        },
+        "pnpm-version": {
+          "description": "Exact pnpm version when needed by ci-install",
+          "type": "string",
+          "default": ""
+        },
+        "bun-version": {
+          "description": "Exact Bun version when needed by ci-install",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "check": "${{ inputs.target }} (${{ inputs.project-dir }})"
+    }
+  },
+  "publish-docker.yml": {
+    "workflow_call": {
+      "inputs": {
+        "image": {
+          "description": "Lowercase ghcr.io/<repository-owner>/<image> name without a tag",
+          "required": "true",
+          "type": "string"
+        },
+        "dockerfile": {
+          "type": "string",
+          "default": "Dockerfile"
+        },
+        "build-context": {
+          "type": "string",
+          "default": "."
+        },
+        "platforms": {
+          "type": "string",
+          "default": "linux/amd64"
+        },
+        "target": {
+          "type": "string",
+          "default": ""
+        }
+      },
+      "outputs": {
+        "digest": {
+          "description": "Immutable published image digest",
+          "value": "${{ jobs.publish.outputs.digest }}"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "validate": "Validate publishing event",
+      "check": "Validate container before publishing",
+      "publish": "Publish approved container"
+    }
+  },
+  "publish-pypi.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "required": "true",
+          "type": "string"
+        },
+        "distribution-name": {
+          "description": "Exact Python distribution name expected in pyproject.toml",
+          "required": "true",
+          "type": "string"
+        }
+      },
+      "secrets": {
+        "PYPI_API_TOKEN": {
+          "description": "PyPI API token authorized to publish the requested distribution",
+          "required": "true"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "build": "Build release distribution",
+      "publish": "Publish from approved environment"
+    }
+  },
+  "python.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "description": "Directory containing pyproject.toml and the lockfile, relative to repository root",
+          "required": "true",
+          "type": "string"
+        },
+        "manager": {
+          "description": "uv or pip",
+          "required": "true",
+          "type": "string"
+        },
+        "python-versions": {
+          "description": "JSON array, for example [\"3.11\",\"3.12\"]",
+          "required": "false",
+          "type": "string",
+          "default": "[\"3.12\"]"
+        },
+        "operating-systems": {
+          "description": "JSON array of GitHub hosted runner labels for unit tests",
+          "type": "string",
+          "default": "[\"ubuntu-latest\"]"
+        },
+        "pip-extras": {
+          "description": "pip editable-install extras, for example test",
+          "required": "false",
+          "type": "string",
+          "default": ""
+        },
+        "pip-constraints": {
+          "description": "Optional caller-owned constraints file, relative to project-dir",
+          "required": "false",
+          "type": "string",
+          "default": ""
+        },
+        "test-path": {
+          "description": "pytest collection path, relative to project-dir",
+          "required": "false",
+          "type": "string",
+          "default": "tests"
+        },
+        "coverage-source": {
+          "description": "Module or directory for coverage; empty disables coverage gate",
+          "required": "false",
+          "type": "string",
+          "default": ""
+        },
+        "coverage-min": {
+          "description": "Required coverage percentage when coverage-source is set",
+          "required": "false",
+          "type": "number",
+          "default": 0
+        },
+        "ruff-version": {
+          "description": "Exact Ruff version for pip projects; uv projects use their lockfile",
+          "required": "false",
+          "type": "string",
+          "default": "0.14.14"
+        },
+        "build-distribution": {
+          "required": "false",
+          "type": "boolean",
+          "default": "false"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "validate": "Validate inputs",
+      "lint": "Ruff lint and format",
+      "test": "Python ${{ matrix.python }} / ${{ matrix.os }}",
+      "build": "Distribution integrity"
+    }
+  },
+  "security.yml": {
+    "workflow_call": {
+      "inputs": {
+        "languages": {
+          "description": "CodeQL languages as JSON array",
+          "required": "false",
+          "type": "string",
+          "default": "[\"python\", \"javascript-typescript\"]"
+        },
+        "dependency-severity": {
+          "description": "low, moderate, high, or critical",
+          "required": "false",
+          "type": "string",
+          "default": "high"
+        },
+        "config-file": {
+          "description": "Optional CodeQL configuration file in the consuming repository",
+          "type": "string",
+          "default": ""
+        },
+        "build-command": {
+          "description": "Optional shell command to prepare and build compiled languages for CodeQL",
+          "type": "string",
+          "default": ""
+        },
+        "enable-gitleaks": {
+          "description": "Run Gitleaks secret detection",
+          "required": "false",
+          "type": "boolean",
+          "default": "false"
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "codeql": "CodeQL ${{ matrix.language }}",
+      "dependencies": "New dependency risk",
+      "secrets": "Secret scan (Gitleaks)"
+    }
+  },
+  "terraform.yml": {
+    "workflow_call": {
+      "inputs": {
+        "project-dir": {
+          "description": "Directory containing Terraform or Terramate files",
+          "required": "true",
+          "type": "string"
+        },
+        "terraform-version": {
+          "description": "Exact Terraform version to install",
+          "type": "string",
+          "default": "1.12.2"
+        },
+        "terramate-version": {
+          "description": "Optional Terramate version when Terramate files are present",
+          "type": "string",
+          "default": ""
+        }
+      }
+    },
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "terraform": "Validate Terraform (${{ inputs.project-dir }})"
+    }
+  },
+  "workflow-lint.yml": {
+    "workflow_call": null,
+    "permissions": {
+      "contents": "read"
+    },
+    "jobs": {
+      "lint": "Actionlint"
+    }
+  }
+}

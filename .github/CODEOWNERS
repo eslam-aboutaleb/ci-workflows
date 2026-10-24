@@ -1,3 +1,9 @@
 # Protect this file and the shared workflows with required owner reviews in a ruleset.
 /.github/ @eslam-aboutaleb
 /README.md @eslam-aboutaleb
+/docs/ @eslam-aboutaleb
+/examples/ @eslam-aboutaleb
+/scripts/ @eslam-aboutaleb
+/tests/ @eslam-aboutaleb
+/requirements/ @eslam-aboutaleb
+/Makefile @eslam-aboutaleb
