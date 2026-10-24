@@ -60,6 +60,17 @@ def checked_project(value, root=None):
     return result
 
 
+def checkout_verified_revision(revision, default_branch):
+    """Select an attested plan revision only if it is still on default-branch history."""
+    require(re.fullmatch(r'[0-9a-f]{40}', revision), 'Invalid verified revision')
+    ancestor = subprocess.run(
+        ['git', 'merge-base', '--is-ancestor', revision, f'refs/remotes/origin/{default_branch}'],
+        capture_output=True, text=True,
+    )
+    require(ancestor.returncode == 0, 'Reviewed revision is not an ancestor of the checked-out default branch')
+    subprocess.run(['git', 'checkout', '--detach', revision], check=True)
+
+
 def run(arguments, cwd, env, **kwargs):
     return subprocess.run(arguments, cwd=cwd, env=env, check=True, **kwargs)
 
@@ -70,6 +81,35 @@ def verify_manifest(manifest, plan, expected):
     for key, value in expected.items():
         require(manifest.get(key) == value, f'Reviewed plan {key} does not match this apply')
     require(manifest.get('plan_sha256') == hashlib.sha256(plan.read_bytes()).hexdigest(), 'Binary plan checksum mismatch')
+
+
+def snapshot_dependency_lock(project, plan_dir):
+    lock = project / '.terraform.lock.hcl'
+    require(not lock.is_symlink(), 'Provider lockfile must not be a symlink')
+    if not lock.exists():
+        return None
+    content = lock.read_bytes()
+    snapshot = plan_dir / lock.name
+    snapshot.write_bytes(content)
+    snapshot.chmod(0o600)
+    return hashlib.sha256(content).hexdigest()
+
+
+def restore_dependency_lock(project, plan_dir, manifest):
+    require('dependency_lock_sha256' in manifest, 'Reviewed plan lacks a provider lock snapshot; create a new plan')
+    digest = manifest['dependency_lock_sha256']
+    snapshot = plan_dir / '.terraform.lock.hcl'
+    target = project / snapshot.name
+    require(not snapshot.is_symlink() and not target.is_symlink(), 'Provider lockfile must not be a symlink')
+    if digest is None:
+        require(not snapshot.exists() and not target.exists(), 'Unexpected provider lockfile for a built-in-only plan')
+        return
+    require(isinstance(digest, str) and re.fullmatch(r'[0-9a-f]{64}', digest), 'Invalid provider lock snapshot checksum')
+    require(snapshot.is_file(), 'Reviewed provider lock snapshot is missing')
+    content = snapshot.read_bytes()
+    require(hashlib.sha256(content).hexdigest() == digest, 'Provider lock snapshot checksum mismatch')
+    target.write_bytes(content)
+    target.chmod(0o600)
 
 
 def execute(mode):
@@ -95,6 +135,7 @@ def execute(mode):
         'project_dir': project.relative_to(root).as_posix(),
         'stack_id': os.environ['STACK_ID'],
         'terraform_version': version,
+        'terramate_version': os.environ.get('TERRAMATE_VERSION', ''),
         'backend_sha256': fingerprint(backend),
         'variables_sha256': fingerprint(variables),
     }
@@ -110,11 +151,16 @@ def execute(mode):
         verify_manifest(manifest, plan, {**expected, 'source_run_id': os.environ['PLAN_RUN_ID']})
     if os.environ.get('TERRAMATE_VERSION'):
         run(['terramate', 'generate'], root, env)
+    if mode == 'apply':
+        restore_dependency_lock(project, plan_dir, manifest)
     with tempfile.TemporaryDirectory(prefix='tf-config-', dir=env['RUNNER_TEMP']) as directory:
         cfg = Path(directory) / 'backend.tfbackend'
         cfg.write_text('\n'.join(f'{key} = {json.dumps(value)}' for key, value in backend.items()) + '\n')
         cfg.chmod(0o600)
-        run(['terraform', 'init', '-input=false', f'-backend-config={cfg}'], project, env)
+        init_args = ['terraform', 'init', '-input=false', f'-backend-config={cfg}']
+        if mode == 'apply':
+            init_args.append('-lockfile=readonly')
+        run(init_args, project, env)
         if mode == 'apply':
             run(['terraform', 'apply', '-input=false', str(plan)], project, env)
             return
@@ -129,6 +175,7 @@ def execute(mode):
             'source_run_id': os.environ['GITHUB_RUN_ID'],
             'plan_sha256': hashlib.sha256(plan.read_bytes()).hexdigest(),
             'has_changes': changed,
+            'dependency_lock_sha256': snapshot_dependency_lock(project, plan_dir),
         }
         (plan_dir / 'manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
         output('plan-dir', plan_dir)
@@ -142,6 +189,8 @@ if __name__ == '__main__':
     if mode == 'verify':
         require(os.environ['CALLER_REF'] == f'refs/heads/{os.environ["DEFAULT_BRANCH"]}' and os.environ['CALLER_REF_PROTECTED'] == 'true', 'Apply must run on the protected default branch')
         sha = verify_source(os.environ['GITHUB_REPOSITORY'], os.environ['PLAN_RUN_ID'], os.environ['PLAN_ARTIFACT_ID'], os.environ['PLAN_SHA'], os.environ['PLAN_WORKFLOW'], os.environ['DEFAULT_BRANCH'])
+        if os.environ.get('CHECKOUT_REVIEWED') == 'true':
+            checkout_verified_revision(sha, os.environ['DEFAULT_BRANCH'])
         output('plan-sha', sha)
     else:
         execute(mode)

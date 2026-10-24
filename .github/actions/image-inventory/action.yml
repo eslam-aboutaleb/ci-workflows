@@ -14,6 +14,9 @@ inputs:
     description: Required comma-separated Linux platforms
     default: linux/arm64
 outputs:
+  artifact-scope:
+    description: Unique namespace for report artifacts from this invocation
+    value: ${{ steps.inventory.outputs.artifact-scope }}
   matrix:
     description: Image/platform include matrix with immutable references
     value: ${{ steps.inventory.outputs.matrix }}

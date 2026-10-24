@@ -8,7 +8,7 @@ import zipfile
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-FILES = {'tfplan', 'manifest.json', 'plan.txt'}
+FILES = {'tfplan', 'manifest.json', 'plan.txt', '.terraform.lock.hcl'}
 HEADER = b'ci-workflows-plan-v1\x00'
 
 

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import uuid
 
 
 def require(condition, message):
@@ -81,3 +82,5 @@ if __name__ == '__main__':
     matrix = inventory(os.environ['IMAGES_JSON'], os.environ['FILES_JSON'], os.environ['PROJECT_DIR'], os.environ['PLATFORMS'])
     with open(os.environ['GITHUB_OUTPUT'], 'a') as stream:
         stream.write('matrix=' + json.dumps({'include': matrix}, separators=(',', ':')) + '\n')
+        # Separate reusable-workflow calls can scan overlapping images in one run.
+        stream.write('artifact-scope=' + uuid.uuid4().hex + '\n')

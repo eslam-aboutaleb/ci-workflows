@@ -40,6 +40,9 @@ inputs:
   plan-workflow:
     description: Expected caller workflow path for the plan
     default: ''
+  checkout-reviewed:
+    description: After API provenance verification, require default-branch ancestry and check out that exact commit
+    default: 'false'
   plan-dir:
     description: Downloaded reviewed plan directory for apply
     default: ''
@@ -134,6 +137,7 @@ runs:
         PLAN_RUN_ID: ${{ inputs.plan-run-id }}
         PLAN_ARTIFACT_ID: ${{ inputs.plan-artifact-id }}
         PLAN_WORKFLOW: ${{ inputs.plan-workflow }}
+        CHECKOUT_REVIEWED: ${{ inputs.checkout-reviewed }}
         PLAN_DIR: ${{ inputs.plan-dir }}
         DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         CALLER_REF: ${{ github.ref }}
@@ -156,7 +160,7 @@ runs:
         import os
         from pathlib import Path
         directory = Path(os.environ['PLAN_DIR'])
-        for name in ('tfplan', 'manifest.json', 'plan.txt'):
+        for name in ('tfplan', 'manifest.json', 'plan.txt', '.terraform.lock.hcl'):
             (directory / name).unlink(missing_ok=True)
         PY
     - name: Remove OCI credential files

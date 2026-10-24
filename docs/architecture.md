@@ -92,6 +92,7 @@ make ci-quality lint
 The tests exercise discovery, required-check failures, legacy commands, public
 contracts, every image in Compose, exact digest inspection, API provenance,
 plan/apply behavior and authenticated artifact encryption. Hosted smoke tests use
-a disposable Terraform local state and a public multi-platform image; they need
+disposable local and loopback HTTP Terraform state, fresh checkouts with a simulated
+provider release, and repeated public multi-platform image scans; they need
 no cloud credentials. Cloud-specific backend access still requires a consumer
 integration run with its own environment and credentials.

@@ -133,6 +133,59 @@ class ProvenanceTests(unittest.TestCase):
                 with self.subTest(path=path), self.assertRaises(ValueError):
                     tf.checked_project(path, root)
 
+    def test_checkout_accepts_only_verified_default_branch_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            source, checkout = root / 'source', root / 'checkout'
+            source.mkdir()
+            def git(*args):
+                return subprocess.check_output(['git', '-C', str(source), *args], text=True).strip()
+            git('init', '-b', 'main')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'base')
+            approved = git('rev-parse', 'HEAD')
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'newer default commit')
+            git('checkout', '-b', 'untrusted', approved)
+            git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'side branch')
+            untrusted = git('rev-parse', 'HEAD')
+            git('checkout', 'main')
+            subprocess.run(['git', 'clone', '-q', str(source), str(checkout)], check=True)
+            program = 'import runpy; module = runpy.run_path(' + repr(str(ROOT / '.github/actions/terraform-operation/operation.py')) + '); module["checkout_verified_revision"]('
+            accepted = subprocess.run([sys.executable, '-c', program + repr(approved) + ', "main")'], cwd=checkout, capture_output=True, text=True)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            rejected = subprocess.run([sys.executable, '-c', program + repr(untrusted) + ', "main")'], cwd=checkout, capture_output=True, text=True)
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn('not an ancestor', rejected.stderr)
+            self.assertEqual(subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=checkout, text=True).strip(), approved)
+
+
+class ProviderLockTests(unittest.TestCase):
+    def test_plan_lock_is_restored_before_apply_and_tampering_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project, plan = root / 'project', root / 'plan'
+            project.mkdir()
+            plan.mkdir()
+            lock = project / '.terraform.lock.hcl'
+            lock.write_text('reviewed provider selection')
+            manifest = {'dependency_lock_sha256': tf.snapshot_dependency_lock(project, plan)}
+            lock.write_text('new provider selected by another run')
+            tf.restore_dependency_lock(project, plan, manifest)
+            self.assertEqual(lock.read_text(), 'reviewed provider selection')
+            (plan / lock.name).write_text('tampered selection')
+            with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                tf.restore_dependency_lock(project, plan, manifest)
+            (plan / lock.name).unlink()
+            with self.assertRaisesRegex(ValueError, 'missing'):
+                tf.restore_dependency_lock(project, plan, manifest)
+
+    def test_builtin_only_plan_and_missing_snapshot_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.assertIsNone(tf.snapshot_dependency_lock(root, root))
+            tf.restore_dependency_lock(root, root, {'dependency_lock_sha256': None})
+            with self.assertRaisesRegex(ValueError, 'create a new plan'):
+                tf.restore_dependency_lock(root, root, {})
+
 
 class OperationTests(unittest.TestCase):
     def test_plan_then_apply_uses_reviewed_binary_and_never_replans(self):
@@ -183,6 +236,7 @@ class PlanProtectionTests(unittest.TestCase):
             (root / 'tfplan').write_bytes(b'private-provider-credentials')
             (root / 'manifest.json').write_text('{"version":1}')
             (root / 'plan.txt').write_text('private configuration')
+            (root / '.terraform.lock.hcl').write_text('reviewed provider lock')
             protection.protect('encrypt', root, key)
             self.assertEqual([path.name for path in root.iterdir()], ['plan.enc'])
             payload = (root / 'plan.enc').read_bytes()
@@ -191,6 +245,7 @@ class PlanProtectionTests(unittest.TestCase):
                 protection.protect('decrypt', root, 'cd' * 32)
             protection.protect('decrypt', root, key)
             self.assertEqual((root / 'tfplan').read_bytes(), b'private-provider-credentials')
+            self.assertEqual((root / '.terraform.lock.hcl').read_text(), 'reviewed provider lock')
             (root / 'plan.enc').write_bytes(payload[:-1] + bytes([payload[-1] ^ 1]))
             with self.assertRaises(InvalidTag):
                 protection.protect('decrypt', root, key)

@@ -25,6 +25,8 @@ Each image/platform gets an image SPDX JSON SBOM and a vulnerability SARIF repor
 Trivy fails on `HIGH,CRITICAL` by default, including unfixed findings; `severity`
 can select other severities. Reports remain available as seven-day artifacts even
 when the vulnerability scan fails. SBOM JSON is never sent to a SARIF endpoint.
+Each invocation gets a separate artifact namespace, so overlapping image lists in
+multiple calls within one workflow run do not collide during artifact upload.
 The workflow scans public registry content; it does not build or publish images.
 
 Set `verify-signatures: true` and provide either a consumer-owned `cosign-key`
@@ -77,6 +79,11 @@ python3 .github/actions/terraform-operation/protect.py decrypt
 
 Review `plan.txt` locally and handle the decrypted binary and text as secrets.
 The script requires the pinned `cryptography` dependency from `requirements/ci.txt`.
+The encrypted bundle also carries the plan-time provider lockfile and its checksum.
+Apply restores that lockfile and initializes with `-lockfile=readonly`, preserving
+the reviewed provider versions even if a newer release appears between runs.
+Terraform and Terramate versions are both bound to the plan manifest. Generate a
+fresh plan when upgrading the operation action from a revision without lock snapshots.
 
 The plan workflow supports same-repository PRs, pushes and manual callers. Fork PRs
 are skipped before credentials are used. PR plans are speculative and cannot be
@@ -91,7 +98,10 @@ environment with required reviewers and branch restrictions. It needs
 `plan-artifact-id`, and `plan-workflow`, the expected consumer caller path such as
 `.github/workflows/infra-plan.yml`. Source validation requires a successful
 push/manual plan from this repository's default branch and that exact caller
-workflow. Apply checks out the approved SHA, downloads the immutable artifact ID,
+workflow. Apply first checks out the trusted default-branch context with full
+history. The provenance-verification routine requires the approved SHA to be an
+ancestor of that branch before checking out the exact commit. A revision removed
+from default-branch history is rejected. It then downloads the immutable artifact ID,
 decrypts it, checks the checksum and configuration manifest, initializes the same
 backend, then applies the saved binary. Missing, expired, altered or mismatched
 plans fail; there is no fallback to a fresh plan. Decrypted files and temporary OCI
