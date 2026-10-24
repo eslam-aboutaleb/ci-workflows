@@ -119,8 +119,12 @@ pinned CLI installation if your operation needs it. Follow it with an `always()`
 call to the same action with `cleanup: 'true'`. The Terraform operation action
 already performs that cleanup internally. Supply the `key-passphrase` input from
 a 64-character random hexadecimal named secret. For the operation step, pass that
-same secret through `OCI_CLI_PASSPHRASE` (CLI), `OCI_PRIVATE_KEY_PASSWORD` (provider)
-and `OCI_private_key_password` (Terraform 1.12 backend), as applicable. The action
+same secret through `OCI_CLI_PASSPHRASE` (CLI) and `OCI_PRIVATE_KEY_PASSWORD`
+(provider), as applicable. The action
 exports only file paths and public identity settings through `GITHUB_ENV`; it
 never writes the passphrase there. The Terraform operation action scopes these
-variables automatically and uses `PLAN_ENCRYPTION_KEY` as the PEM passphrase.
+variables automatically and uses `PLAN_ENCRYPTION_KEY` as the PEM passphrase. It
+also maps OCI's uppercase provider variables to the lowercase backend aliases
+inside the Terraform subprocess. Direct backend callers must perform the same
+mapping in their own shell/process; GitHub's YAML env maps reject names differing
+only by case.

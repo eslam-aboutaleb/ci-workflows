@@ -143,6 +143,7 @@ class OperationTests(unittest.TestCase):
             executable = root / 'bin/terraform'
             executable.write_text('#!' + sys.executable + '\n' + '''import json, os, pathlib, sys
 args = sys.argv[1:]
+assert os.environ['OCI_private_key_password'] == os.environ['OCI_PRIVATE_KEY_PASSWORD']
 with open(os.environ['COMMAND_LOG'], 'a') as stream: stream.write(json.dumps(args) + '\\n')
 if args[0] == 'version': print(json.dumps({'terraform_version': '1.12.2'}))
 elif args[0] == 'plan':
@@ -153,7 +154,7 @@ elif args[0] == 'plan':
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
             subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-qm', 'fixture'], check=True)
             sha = subprocess.check_output(['git', '-C', str(root), 'rev-parse', 'HEAD'], text=True).strip()
-            env = {**os.environ, 'PATH': str(root / 'bin') + os.pathsep + os.environ['PATH'], 'COMMAND_LOG': str(root / 'commands'), 'OPERATION': 'plan', 'PROJECT_DIR': 'infra', 'STACK_ID': 'production', 'TERRAFORM_VERSION': '1.12.2', 'TERRAMATE_VERSION': '', 'GITHUB_SHA': sha, 'GITHUB_REPOSITORY': 'owner/repo', 'GITHUB_RUN_ID': '11', 'RUNNER_TEMP': str(root), 'GITHUB_OUTPUT': str(root / 'output'), 'GITHUB_STEP_SUMMARY': str(root / 'summary'), 'PLAN_DIR': str(root / 'plan')}
+            env = {**os.environ, 'PATH': str(root / 'bin') + os.pathsep + os.environ['PATH'], 'OCI_PRIVATE_KEY_PASSWORD': 'fixture-only-passphrase', 'COMMAND_LOG': str(root / 'commands'), 'OPERATION': 'plan', 'PROJECT_DIR': 'infra', 'STACK_ID': 'production', 'TERRAFORM_VERSION': '1.12.2', 'TERRAMATE_VERSION': '', 'GITHUB_SHA': sha, 'GITHUB_REPOSITORY': 'owner/repo', 'GITHUB_RUN_ID': '11', 'RUNNER_TEMP': str(root), 'GITHUB_OUTPUT': str(root / 'output'), 'GITHUB_STEP_SUMMARY': str(root / 'summary'), 'PLAN_DIR': str(root / 'plan')}
             script = ROOT / '.github/actions/terraform-operation/operation.py'
             subprocess.run([sys.executable, str(script)], cwd=root, env=env, check=True, capture_output=True)
             self.assertIn('has-changes=true', (root / 'output').read_text())
@@ -285,7 +286,7 @@ class OCITests(unittest.TestCase):
             self.assertNotIn(passphrase, Path(env['GITHUB_ENV']).read_text())
             restored = serialization.load_pem_private_key(key.read_bytes(), password=passphrase.encode())
             self.assertEqual(restored.private_numbers(), signing_key.private_numbers())
-            self.assertEqual(values['OCI_private_key_path'], values['OCI_PRIVATE_KEY_PATH'])
+            self.assertNotIn('OCI_private_key_path', values)
             oci.cleanup({**env, **values})
             self.assertFalse(key.exists())
             with self.assertRaises(ValueError):

@@ -80,6 +80,12 @@ def execute(mode):
     require(all(isinstance(value, (str, int, bool)) for value in backend.values()), 'Backend settings must be scalar values')
     variables = object_json(os.environ.get('TF_VARS_JSON', '{}'), 'tf-vars')
     env = {**os.environ, 'TF_IN_AUTOMATION': 'true', 'TF_INPUT': 'false'}
+    # GitHub env maps reject names differing only by case. Terraform 1.12's
+    # backend needs lowercase OCI attributes, while the provider needs uppercase.
+    # Add backend aliases only inside the Linux Terraform subprocess environment.
+    for name in ('USER_OCID', 'TENANCY_OCID', 'FINGERPRINT', 'REGION', 'PRIVATE_KEY_PATH', 'PRIVATE_KEY_PASSWORD'):
+        if env.get('OCI_' + name):
+            env['OCI_' + name.lower()] = env['OCI_' + name]
     env.update({f'TF_VAR_{key}': value if isinstance(value, str) else json.dumps(value) for key, value in variables.items()})
     version = json.loads(subprocess.check_output(['terraform', 'version', '-json'], env=env, text=True))['terraform_version']
     require(version == os.environ['TERRAFORM_VERSION'], 'Installed Terraform version differs from the pinned version')

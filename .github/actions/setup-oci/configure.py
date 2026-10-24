@@ -44,15 +44,6 @@ def configure(config_json, private_key, passphrase, environ=os.environ):
         'OCI_REGION': config['region'],
         'CI_OCI_CREDENTIAL_DIR': str(directory),
     }
-    # Terraform 1.12's OCI backend reads OCI_<lowercase attribute>, whereas
-    # the OCI provider reads the conventional uppercase environment names.
-    values.update({
-        'OCI_user_ocid': config['user'],
-        'OCI_tenancy_ocid': config['tenancy'],
-        'OCI_fingerprint': config['fingerprint'],
-        'OCI_region': config['region'],
-        'OCI_private_key_path': str(key),
-    })
     with open(environ['GITHUB_ENV'], 'a') as stream:
         for name, value in values.items():
             stream.write(f'{name}={value}\n')

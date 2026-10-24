@@ -49,6 +49,8 @@ def check():
             if permissions.get('id-token') == 'write':
                 assert name == 'publish-pypi.yml' or job.get('uses', '').endswith('/publish-pypi.yml'), context
             for step in job.get('steps', []):
+                names = list(step.get('env', {}))
+                assert len(names) == len({key.casefold() for key in names}), (context, 'GitHub env keys must be unique ignoring case')
                 action = step.get('uses')
                 if not action:
                     continue
@@ -67,6 +69,8 @@ def check():
         action = load(path)
         assert action['runs']['using'] == 'composite', path
         for step in action['runs']['steps']:
+            names = list(step.get('env', {}))
+            assert len(names) == len({key.casefold() for key in names}), (path, 'GitHub env keys must be unique ignoring case')
             if 'run' in step:
                 assert step.get('shell') == 'bash', path
                 assert '${{ inputs.' not in step['run'], (path, 'Pass inputs through environment variables')

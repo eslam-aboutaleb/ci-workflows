@@ -129,7 +129,6 @@ runs:
         BACKEND_CONFIG: ${{ inputs.backend-config }}
         TF_VARS_JSON: ${{ inputs.tf-vars }}
         OCI_PRIVATE_KEY_PASSWORD: ${{ inputs.plan-encryption-key }}
-        OCI_private_key_password: ${{ inputs.plan-encryption-key }}
         OCI_CLI_PASSPHRASE: ${{ inputs.plan-encryption-key }}
         PLAN_SHA: ${{ inputs.plan-sha }}
         PLAN_RUN_ID: ${{ inputs.plan-run-id }}
