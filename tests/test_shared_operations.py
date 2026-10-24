@@ -29,7 +29,7 @@ protection = module('plan_protection', '.github/actions/terraform-operation/prot
 
 class CompatibilityTests(unittest.TestCase):
     def test_runtime_encryption_dependency_matches_maintained_requirement(self):
-        requirement = next(line for line in (ROOT / 'requirements/ci.txt').read_text().splitlines() if line.startswith('cryptography=='))
+        requirement = next(line for line in (ROOT / 'requirements/ci.in').read_text().splitlines() if line.startswith('cryptography=='))
         for action in ['terraform-operation', 'setup-oci']:
             self.assertIn(requirement, (ROOT / f'.github/actions/{action}/action.yml').read_text())
 
