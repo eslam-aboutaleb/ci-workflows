@@ -76,7 +76,7 @@ jobs:
         persist-credentials: false
     - name: Execute drift
       id: terraform
-      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@19c17df7430ba65b0e89ed7dd205a3973b97a977
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@e6111a70ab3294d2f1276461057a29c1b8cd0d4c
       with:
         operation: drift
         project-dir: ${{ inputs.project-dir }}
