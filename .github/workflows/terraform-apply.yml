@@ -72,23 +72,24 @@ jobs:
       group: terraform-state-${{ github.repository }}-${{ inputs.stack-id }}
       cancel-in-progress: false
     steps:
+    # The job guard limits this default checkout to a protected manual run.
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        fetch-depth: 0
     - name: Verify approved plan provenance
       id: source
-      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@8abb7c1c7b29111a82fa2150a1f1ddd645de7478
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@f2a9e48392eaf6dc3e4f7fce9252cb5bf0056cf5
       env:
         GH_TOKEN: ${{ github.token }}
       with:
         operation: verify
+        checkout-reviewed: 'true'
         stack-id: ${{ inputs.stack-id }}
         plan-sha: ${{ inputs.plan-sha }}
         plan-run-id: ${{ inputs.plan-run-id }}
         plan-artifact-id: ${{ inputs.plan-artifact-id }}
         plan-workflow: ${{ inputs.plan-workflow }}
-    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      with:
-        persist-credentials: false
-        # This action output is produced only after API provenance verification.
-        ref: ${{ steps.source.outputs.verified-revision }}
     - name: Download the exact reviewed plan artifact
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
@@ -99,7 +100,7 @@ jobs:
         merge-multiple: true
     - name: Execute apply
       id: terraform
-      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@8abb7c1c7b29111a82fa2150a1f1ddd645de7478
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@f2a9e48392eaf6dc3e4f7fce9252cb5bf0056cf5
       with:
         operation: apply
         project-dir: ${{ inputs.project-dir }}

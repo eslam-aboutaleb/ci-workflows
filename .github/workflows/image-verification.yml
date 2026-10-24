@@ -56,6 +56,7 @@ jobs:
       contents: read
     outputs:
       matrix: ${{ steps.inventory.outputs.matrix }}
+      artifact-scope: ${{ steps.inventory.outputs.artifact-scope }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -84,7 +85,7 @@ jobs:
           PY
       - name: Discover and validate every image/platform
         id: inventory
-        uses: eslam-aboutaleb/ci-workflows/.github/actions/image-inventory@8abb7c1c7b29111a82fa2150a1f1ddd645de7478
+        uses: eslam-aboutaleb/ci-workflows/.github/actions/image-inventory@f2a9e48392eaf6dc3e4f7fce9252cb5bf0056cf5
         with:
           images: ${{ inputs.images }}
           project-dir: ${{ inputs.project-dir }}
@@ -155,7 +156,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: image-verification-${{ matrix.id }}
+          name: image-verification-${{ needs.inventory.outputs.artifact-scope }}-${{ matrix.id }}
           path: |
             sbom.spdx.json
             vulnerabilities.sarif

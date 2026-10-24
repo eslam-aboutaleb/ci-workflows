@@ -59,6 +59,8 @@ jobs:
           plan-run-id: ${{ github.run_id }}
           plan-dir: ${{ runner.temp }}/smoke-plan
           plan-encryption-key: ${{ env.SMOKE_PLAN_KEY }}
+      - name: Apply an encrypted plan from a fresh checkout after a provider release
+        run: python3 tests/runtime/terraform_portability.py
 
   image-security:
     name: Real multi-platform image verification
@@ -69,3 +71,13 @@ jobs:
     with:
       images: '["cgr.dev/chainguard/static:latest"]'
       platforms: linux/amd64,linux/arm64
+
+  image-security-repeat:
+    name: Repeated image verification artifact isolation
+    uses: ./.github/workflows/image-verification.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      images: '["cgr.dev/chainguard/static:latest"]'
+      platforms: linux/amd64
