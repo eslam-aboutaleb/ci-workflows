@@ -25,7 +25,7 @@ runs:
     - name: Install credential encryption dependency
       if: inputs.cleanup != 'true'
       shell: bash
-      run: uv pip install --python python3 'cryptography==50.0.2'
+      run: uv pip install --system --python "$(python3 -c 'import sys; print(sys.executable)')" 'cryptography==50.0.2'
     - name: Configure isolated OCI credentials
       if: inputs.cleanup != 'true'
       shell: bash
