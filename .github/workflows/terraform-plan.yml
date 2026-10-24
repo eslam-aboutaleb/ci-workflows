@@ -72,7 +72,7 @@ jobs:
         persist-credentials: false
     - name: Execute plan
       id: terraform
-      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@7bea362d30c68e14744e9f86855508e08949265b
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@19c17df7430ba65b0e89ed7dd205a3973b97a977
       with:
         operation: plan
         project-dir: ${{ inputs.project-dir }}

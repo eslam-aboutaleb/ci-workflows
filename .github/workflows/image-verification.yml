@@ -84,7 +84,7 @@ jobs:
           PY
       - name: Discover and validate every image/platform
         id: inventory
-        uses: eslam-aboutaleb/ci-workflows/.github/actions/image-inventory@7bea362d30c68e14744e9f86855508e08949265b
+        uses: eslam-aboutaleb/ci-workflows/.github/actions/image-inventory@19c17df7430ba65b0e89ed7dd205a3973b97a977
         with:
           images: ${{ inputs.images }}
           project-dir: ${{ inputs.project-dir }}
