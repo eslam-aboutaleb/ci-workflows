@@ -62,7 +62,7 @@ The aggregate workflow accepts `config-file` (default `.github/ci.json`) and `ch
 
 | Evidence in the consuming repository | Selected check |
 | --- | --- |
-| `pyproject.toml` | Python quality; uv when `uv.lock` exists, otherwise pip |
+| `pyproject.toml` | Python quality; uv when `uv.lock` exists, otherwise editable installation through uv |
 | `package.json` with a local npm, pnpm, or Bun lockfile | Node quality |
 | A workspace package with no local lockfile | Covered by its owning workspace root; the summary lists these members |
 | A standalone `package.json` without a supported lockfile | Discovery fails instead of silently omitting tests |
@@ -259,3 +259,5 @@ and regression tests in `tests/`; the former `.github/scripts/` commands and
 workflow paths and the public schema URL remain stable. The
 [architecture guide](docs/architecture.md) describes dependency pinning and the
 folder boundaries.
+
+Repository tooling uses uv and a local `.venv`. Install uv, then run `make ci-install` and `make ci-quality` (Python 3.11 or newer). Refresh the universal, hash-locked dependencies with `make lock` after editing `requirements/ci.in`. Existing `manager: pip`, `pip-extras`, and `pip-constraints` inputs remain supported; their installations now use uv’s pip-compatible interface. Distribution builds also use uv for isolated build dependencies.

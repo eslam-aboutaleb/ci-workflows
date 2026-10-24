@@ -92,10 +92,12 @@ runs:
       if: inputs.operation != 'verify'
       with:
         python-version: '3.12'
+    - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      if: inputs.operation != 'verify'
     - name: Install plan encryption dependency
       if: inputs.operation != 'verify'
       shell: bash
-      run: python3 -m pip install 'cryptography==50.0.2'
+      run: uv pip install --system --python "$(python3 -c 'import sys; print(sys.executable)')" 'cryptography==50.0.2'
     - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
       if: inputs.operation != 'verify'
       with:
