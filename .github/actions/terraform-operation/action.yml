@@ -89,7 +89,7 @@ runs:
     - name: Install plan encryption dependency
       if: inputs.operation != 'verify'
       shell: bash
-      run: python3 -m pip install 'cryptography==46.0.3'
+      run: python3 -m pip install 'cryptography==50.0.2'
     - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
       if: inputs.operation != 'verify'
       with:

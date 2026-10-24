@@ -28,6 +28,10 @@ protection = module('plan_protection', '.github/actions/terraform-operation/prot
 
 
 class CompatibilityTests(unittest.TestCase):
+    def test_runtime_encryption_dependency_matches_maintained_requirement(self):
+        requirement = next(line for line in (ROOT / 'requirements/ci.txt').read_text().splitlines() if line.startswith('cryptography=='))
+        self.assertIn(requirement, (ROOT / '.github/actions/terraform-operation/action.yml').read_text())
+
     def test_current_downstream_callers_still_match_shared_interfaces(self):
         callers = json.loads((ROOT / 'tests/fixtures/downstream-callers.json').read_text())
         for repo, jobs in callers.items():
