@@ -66,7 +66,7 @@ jobs:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - name: Install workspace manifest parser
-        run: uv pip install --python python 'PyYAML==6.0.2'
+        run: uv pip install --system --python "$(python -c 'import sys; print(sys.executable)')" 'PyYAML==6.0.2'
       - id: scan
         name: Validate configuration and discover qualification checks
         env:

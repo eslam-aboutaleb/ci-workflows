@@ -66,7 +66,7 @@ jobs:
           PY
       - name: Build and validate
         run: |
-          uv pip install --python python 'build==1.2.2.post1' 'twine==6.1.0'
+          uv pip install --system --python "$(python -c 'import sys; print(sys.executable)')" 'build==1.2.2.post1' 'twine==6.1.0'
           python -m build --installer=uv
           python -m twine check --strict dist/*
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
