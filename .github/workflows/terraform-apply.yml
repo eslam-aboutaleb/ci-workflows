@@ -74,7 +74,7 @@ jobs:
     steps:
     - name: Verify approved plan provenance
       id: source
-      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@e6111a70ab3294d2f1276461057a29c1b8cd0d4c
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@8abb7c1c7b29111a82fa2150a1f1ddd645de7478
       env:
         GH_TOKEN: ${{ github.token }}
       with:
@@ -99,7 +99,7 @@ jobs:
         merge-multiple: true
     - name: Execute apply
       id: terraform
-      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@e6111a70ab3294d2f1276461057a29c1b8cd0d4c
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@8abb7c1c7b29111a82fa2150a1f1ddd645de7478
       with:
         operation: apply
         project-dir: ${{ inputs.project-dir }}
