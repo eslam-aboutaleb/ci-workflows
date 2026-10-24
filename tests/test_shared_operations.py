@@ -235,6 +235,13 @@ class ImageTests(unittest.TestCase):
         result = images.resolve('image:tag', ['linux/arm64'], lambda _: next(replies))
         self.assertEqual(result[0]['image'], 'image:tag@' + self.digest)
 
+    def test_arm64_v8_manifest_matches_arm64_but_arm_v6_cannot_match_v7(self):
+        def inspect(args):
+            return {'digest': self.digest, 'manifests': [{'platform': {'os': 'linux', 'architecture': 'arm64', 'variant': 'v8'}}, {'platform': {'os': 'linux', 'architecture': 'arm', 'variant': 'v6'}}]}
+        self.assertEqual(images.resolve('image', ['linux/arm64'], inspect)[0]['platform'], 'linux/arm64')
+        with self.assertRaises(ValueError):
+            images.resolve('image', ['linux/arm/v7'], inspect)
+
     def test_all_compose_service_images_are_checked(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -28,6 +28,15 @@ def command(args):
     return json.loads(result.stdout)
 
 
+def platform_name(config):
+    name = config.get('os', '') + '/' + config.get('architecture', '')
+    # OCI commonly advertises arm64/v8; linux/arm64 accepts that variant.
+    # The arm/v7 architecture needs its variant to distinguish it from arm/v6.
+    if config.get('architecture') == 'arm' and config.get('variant'):
+        name += '/' + config['variant']
+    return name
+
+
 def resolve(image, platforms, inspect=command):
     require(isinstance(image, str) and re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._/:@-]*', image), 'Invalid image reference')
     # Keep existing digest pins: inspecting a mutable tag would validate different content.
@@ -37,10 +46,10 @@ def resolve(image, platforms, inspect=command):
     if '@' in image:
         require(image.rsplit('@', 1)[1] == digest, 'Registry digest differs from the pinned image')
     immutable = image.split('@', 1)[0] + '@' + digest
-    advertised = {p['platform'].get('os', '') + '/' + p['platform'].get('architecture', '') + ('/' + p['platform']['variant'] if p['platform'].get('variant') else '') for p in descriptor.get('manifests', []) if 'platform' in p}
+    advertised = {platform_name(p['platform']) for p in descriptor.get('manifests', []) if 'platform' in p}
     if not advertised:
         config = inspect(['docker', 'buildx', 'imagetools', 'inspect', immutable, '--format', '{{json .Image}}'])
-        advertised = {config.get('os', '') + '/' + config.get('architecture', '') + ('/' + config['variant'] if config.get('variant') else '')}
+        advertised = {platform_name(config)}
     require(set(platforms) <= advertised, f'{image} does not support every required platform: {platforms}')
     return [{'image': immutable, 'platform': platform, 'id': hashlib.sha256(f'{immutable}/{platform}'.encode()).hexdigest()[:20]} for platform in platforms]
 
