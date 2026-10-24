@@ -3,14 +3,13 @@ import json
 import os
 from pathlib import Path
 import re
-import secrets
 import shutil
 import tempfile
 
 from cryptography.hazmat.primitives import serialization
 
 
-def configure(config_json, private_key, environ=os.environ):
+def configure(config_json, private_key, passphrase, environ=os.environ):
     config = json.loads(config_json)
     keys = {'user', 'tenancy', 'fingerprint', 'region'}
     if not isinstance(config, dict) or set(config) != keys:
@@ -20,7 +19,8 @@ def configure(config_json, private_key, environ=os.environ):
     if 'PRIVATE KEY-----' not in private_key:
         raise ValueError('OCI_API_KEY must contain a PEM private key')
     signing_key = serialization.load_pem_private_key(private_key.encode(), password=None)
-    passphrase = secrets.token_urlsafe(32)
+    if not re.fullmatch(r'[0-9a-fA-F]{64}', passphrase):
+        raise ValueError('The OCI key passphrase must be a 64-character random hexadecimal secret')
     encrypted_key = signing_key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,
@@ -38,8 +38,6 @@ def configure(config_json, private_key, environ=os.environ):
         'OCI_CLI_CONFIG_FILE': str(cfg),
         'OCI_CLI_KEY_FILE': str(key),
         'OCI_PRIVATE_KEY_PATH': str(key),
-        'OCI_PRIVATE_KEY_PASSWORD': passphrase,
-        'OCI_CLI_PASSPHRASE': passphrase,
         'OCI_USER_OCID': config['user'],
         'OCI_TENANCY_OCID': config['tenancy'],
         'OCI_FINGERPRINT': config['fingerprint'],
@@ -54,10 +52,7 @@ def configure(config_json, private_key, environ=os.environ):
         'OCI_fingerprint': config['fingerprint'],
         'OCI_region': config['region'],
         'OCI_private_key_path': str(key),
-        'OCI_private_key_password': passphrase,
     })
-    if environ.get('GITHUB_ACTIONS') == 'true':
-        print(f'::add-mask::{passphrase}')
     with open(environ['GITHUB_ENV'], 'a') as stream:
         for name, value in values.items():
             stream.write(f'{name}={value}\n')
@@ -78,4 +73,4 @@ if __name__ == '__main__':
     if sys.argv[1:] == ['cleanup']:
         cleanup()
     else:
-        configure(os.environ['OCI_CONFIG_JSON'], os.environ['OCI_API_KEY'])
+        configure(os.environ['OCI_CONFIG_JSON'], os.environ['OCI_API_KEY'], os.environ['OCI_KEY_PASSPHRASE'])

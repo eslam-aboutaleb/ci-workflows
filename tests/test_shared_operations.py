@@ -276,19 +276,20 @@ class OCITests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             env = {'RUNNER_TEMP': directory, 'GITHUB_ENV': str(Path(directory) / 'env')}
             cfg = {'user': 'ocid1.user.test', 'tenancy': 'ocid1.tenancy.test', 'fingerprint': 'ab:cd', 'region': 'eu-frankfurt-1'}
-            values = oci.configure(json.dumps(cfg), pem, env)
+            passphrase = 'ab' * 32
+            values = oci.configure(json.dumps(cfg), pem, passphrase, env)
             key = Path(values['OCI_PRIVATE_KEY_PATH'])
             self.assertEqual(key.stat().st_mode & 0o777, 0o600)
             self.assertIn(b'BEGIN ENCRYPTED PRIVATE KEY', key.read_bytes())
             self.assertNotIn(pem, Path(env['GITHUB_ENV']).read_text())
-            restored = serialization.load_pem_private_key(key.read_bytes(), password=values['OCI_PRIVATE_KEY_PASSWORD'].encode())
+            self.assertNotIn(passphrase, Path(env['GITHUB_ENV']).read_text())
+            restored = serialization.load_pem_private_key(key.read_bytes(), password=passphrase.encode())
             self.assertEqual(restored.private_numbers(), signing_key.private_numbers())
             self.assertEqual(values['OCI_private_key_path'], values['OCI_PRIVATE_KEY_PATH'])
-            self.assertEqual(values['OCI_private_key_password'], values['OCI_PRIVATE_KEY_PASSWORD'])
             oci.cleanup({**env, **values})
             self.assertFalse(key.exists())
             with self.assertRaises(ValueError):
-                oci.configure(json.dumps({**cfg, 'region': 'bad\ninjected=true'}), 'PRIVATE KEY-----', env)
+                oci.configure(json.dumps({**cfg, 'region': 'bad\ninjected=true'}), pem, passphrase, env)
 
 
 if __name__ == '__main__':

@@ -87,7 +87,8 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
         persist-credentials: false
-        ref: ${{ steps.source.outputs.plan-sha }}
+        # This action output is produced only after API provenance verification.
+        ref: ${{ steps.source.outputs.verified-revision }}
     - name: Download the exact reviewed plan artifact
       uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
@@ -111,5 +112,5 @@ jobs:
         tf-vars: ${{ secrets.TF_VARS_JSON || '{}' }}
         plan-encryption-key: ${{ secrets.PLAN_ENCRYPTION_KEY }}
         plan-dir: ${{ runner.temp }}/terraform-plan
-        plan-sha: ${{ steps.source.outputs.plan-sha }}
+        plan-sha: ${{ steps.source.outputs.verified-revision }}
         plan-run-id: ${{ inputs.plan-run-id }}

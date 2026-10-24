@@ -7,6 +7,9 @@ inputs:
   api-key:
     description: PEM API signing key; pass a named Actions secret
     default: ''
+  key-passphrase:
+    description: 64-character random hexadecimal named secret; supply it as an environment variable to the consuming operation too
+    default: ''
   cleanup:
     description: Set true in an always() step after using the credentials
     default: 'false'
@@ -27,6 +30,7 @@ runs:
       env:
         OCI_CONFIG_JSON: ${{ inputs.config }}
         OCI_API_KEY: ${{ inputs.api-key }}
+        OCI_KEY_PASSPHRASE: ${{ inputs.key-passphrase }}
       run: python3 "$GITHUB_ACTION_PATH/configure.py"
     - name: Remove OCI credential files
       if: inputs.cleanup == 'true'

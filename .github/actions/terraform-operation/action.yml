@@ -56,6 +56,9 @@ outputs:
   plan-sha:
     description: Verified approved source commit
     value: ${{ steps.operation.outputs.plan-sha }}
+  verified-revision:
+    description: Commit proven to belong to the successful approved default-branch plan run and artifact
+    value: ${{ steps.operation.outputs.plan-sha }}
 runs:
   using: composite
   steps:
@@ -105,6 +108,7 @@ runs:
       env:
         OCI_CONFIG_JSON: ${{ inputs.oci-config }}
         OCI_API_KEY: ${{ inputs.oci-api-key }}
+        OCI_KEY_PASSPHRASE: ${{ inputs.plan-encryption-key }}
       run: python3 "$GITHUB_ACTION_PATH/../setup-oci/configure.py"
     - name: Decrypt reviewed plan
       if: inputs.operation == 'apply'
@@ -124,6 +128,9 @@ runs:
         TERRAMATE_VERSION: ${{ inputs.terramate-version }}
         BACKEND_CONFIG: ${{ inputs.backend-config }}
         TF_VARS_JSON: ${{ inputs.tf-vars }}
+        OCI_PRIVATE_KEY_PASSWORD: ${{ inputs.plan-encryption-key }}
+        OCI_private_key_password: ${{ inputs.plan-encryption-key }}
+        OCI_CLI_PASSPHRASE: ${{ inputs.plan-encryption-key }}
         PLAN_SHA: ${{ inputs.plan-sha }}
         PLAN_RUN_ID: ${{ inputs.plan-run-id }}
         PLAN_ARTIFACT_ID: ${{ inputs.plan-artifact-id }}
