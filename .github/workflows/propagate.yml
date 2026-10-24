@@ -67,4 +67,4 @@ jobs:
           if [[ "${DRY_RUN}" == "true" ]]; then
             ARGS+=(--dry-run)
           fi
-          python3 .github/scripts/propagate_updates.py "${ARGS[@]}"
+          python3 scripts/maintenance/propagate_updates.py "${ARGS[@]}"

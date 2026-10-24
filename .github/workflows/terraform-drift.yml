@@ -1,0 +1,110 @@
+name: Terraform drift
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Terraform stack directory in the consuming repository
+        type: string
+        required: true
+      stack-id:
+        description: Stable stack identifier used for artifacts and state operation concurrency
+        type: string
+        required: true
+      terraform-version:
+        description: Exact Terraform version
+        type: string
+        default: 1.12.2
+      terramate-version:
+        description: Exact Terramate version; empty disables generation
+        type: string
+        default: ''
+      backend-config:
+        description: JSON object of nonsecret backend settings
+        type: string
+        default: '{}'
+      oci-config:
+        description: 'Optional JSON object: user, tenancy, fingerprint, region'
+        type: string
+        default: ''
+      environment:
+        description: Consumer-owned GitHub environment; configure its protection rules before adoption
+        type: string
+        default: infrastructure-read
+      fail-on-drift:
+        description: Fail this workflow when infrastructure changes are detected
+        type: boolean
+        default: true
+    secrets:
+      OCI_API_KEY:
+        description: Optional OCI API signing key when oci-config is set
+        required: false
+      TF_VARS_JSON:
+        description: JSON object of Terraform input variables
+        required: false
+      PLAN_ENCRYPTION_KEY:
+        description: 64-character random hexadecimal encryption key shared by plan and apply
+        required: true
+    outputs:
+      has-changes:
+        description: Whether the Terraform plan contains changes
+        value: ${{ jobs.operation.outputs.has-changes }}
+      plan-sha:
+        description: Source commit used for the plan
+        value: ${{ github.sha }}
+      plan-run-id:
+        description: Source workflow run ID
+        value: ${{ github.run_id }}
+      plan-artifact-id:
+        description: Immutable encrypted plan artifact ID
+        value: ${{ jobs.operation.outputs.plan-artifact-id }}
+permissions:
+  contents: read
+jobs:
+  operation:
+    name: Terraform drift (${{ inputs.stack-id }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: terraform-state-${{ github.repository }}-${{ inputs.stack-id }}
+      cancel-in-progress: false
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - name: Execute drift
+      id: terraform
+      uses: eslam-aboutaleb/ci-workflows/.github/actions/terraform-operation@7617cb453a415f0a957d53ef12938f13c30cba73
+      with:
+        operation: drift
+        project-dir: ${{ inputs.project-dir }}
+        stack-id: ${{ inputs.stack-id }}
+        terraform-version: ${{ inputs.terraform-version }}
+        terramate-version: ${{ inputs.terramate-version }}
+        backend-config: ${{ inputs.backend-config }}
+        oci-config: ${{ inputs.oci-config }}
+        oci-api-key: ${{ secrets.OCI_API_KEY }}
+        tf-vars: ${{ secrets.TF_VARS_JSON || '{}' }}
+        plan-encryption-key: ${{ secrets.PLAN_ENCRYPTION_KEY }}
+        plan-dir: ${{ runner.temp }}/terraform-plan
+    - name: Upload encrypted plan and diagnostics
+      id: artifact
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      if: always() && steps.terraform.outcome != 'skipped'
+      with:
+        name: terraform-plan-${{ inputs.stack-id }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/terraform-plan/plan.enc
+        retention-days: 1
+        if-no-files-found: error
+    - name: Enforce drift policy
+      if: inputs.fail-on-drift && steps.terraform.outputs.has-changes == 'true'
+      shell: bash
+      run: 'echo "::error::Infrastructure drift detected; review the encrypted plan artifact."
+
+        exit 1'
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    outputs:
+      has-changes: ${{ steps.terraform.outputs.has-changes }}
+      plan-artifact-id: ${{ steps.artifact.outputs.artifact-id }}

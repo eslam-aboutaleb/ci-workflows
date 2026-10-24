@@ -1,0 +1,20 @@
+name: Infrastructure plan
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  plan:
+    uses: eslam-aboutaleb/ci-workflows/.github/workflows/terraform-plan.yml@COMMIT_SHA
+    with:
+      project-dir: infrastructure/stacks/oci/production
+      stack-id: oci-production
+      terraform-version: 1.12.2
+      terramate-version: 0.11.6
+      environment: infrastructure-plan
+      backend-config: ${{ vars.TF_BACKEND_CONFIG_JSON }}
+      oci-config: ${{ vars.OCI_CONFIG_JSON }}
+    secrets:
+      OCI_API_KEY: ${{ secrets.OCI_API_KEY }}
+      TF_VARS_JSON: ${{ secrets.TF_VARS_JSON }}
+      PLAN_ENCRYPTION_KEY: ${{ secrets.PLAN_ENCRYPTION_KEY }}

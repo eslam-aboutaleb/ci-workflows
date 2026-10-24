@@ -1,0 +1,71 @@
+name: Shared operation smoke tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-local:
+    name: Real Terraform local plan and apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare disposable local stack and encryption key
+        shell: bash
+        run: |
+          mkdir -p .smoke-terraform
+          cat > .smoke-terraform/main.tf <<'EOF'
+          resource "terraform_data" "smoke" {
+            input = "shared-workflow-smoke"
+          }
+          EOF
+          KEY=$(openssl rand -hex 32)
+          echo "::add-mask::$KEY"
+          echo "SMOKE_PLAN_KEY=$KEY" >> "$GITHUB_ENV"
+      - name: Create encrypted local plan
+        id: plan
+        uses: ./.github/actions/terraform-operation
+        with:
+          operation: plan
+          project-dir: .smoke-terraform
+          stack-id: smoke
+          plan-dir: ${{ runner.temp }}/smoke-plan
+          plan-encryption-key: ${{ env.SMOKE_PLAN_KEY }}
+      - name: Check plan artifact is encrypted
+        shell: bash
+        env:
+          PLAN_DIR: ${{ runner.temp }}/smoke-plan
+        run: |
+          test -f "$PLAN_DIR/plan.enc"
+          test ! -f "$PLAN_DIR/tfplan"
+          test ! -f "$PLAN_DIR/plan.txt"
+      - name: Apply the saved local plan
+        uses: ./.github/actions/terraform-operation
+        with:
+          operation: apply
+          project-dir: .smoke-terraform
+          stack-id: smoke
+          plan-sha: ${{ github.sha }}
+          plan-run-id: ${{ github.run_id }}
+          plan-dir: ${{ runner.temp }}/smoke-plan
+          plan-encryption-key: ${{ env.SMOKE_PLAN_KEY }}
+
+  image-security:
+    name: Real multi-platform image verification
+    uses: ./.github/workflows/image-verification.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      images: '["cgr.dev/chainguard/static:latest"]'
+      platforms: linux/amd64,linux/arm64
