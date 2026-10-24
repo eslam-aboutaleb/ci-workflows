@@ -85,7 +85,7 @@ caller on the default branch and allow the entire source run to complete
 successfully. Returned outputs are `has-changes`, `plan-sha`, `plan-run-id` and
 `plan-artifact-id`. Keep plan and apply as separate caller runs.
 
-The apply caller must run on the protected default branch and select a consumer
+The apply caller must be manually dispatched on the protected default branch and select a consumer
 environment with required reviewers and branch restrictions. It needs
 `contents: read` and `actions: read`. Supply `plan-sha`, `plan-run-id`, the exact
 `plan-artifact-id`, and `plan-workflow`, the expected consumer caller path such as
@@ -111,8 +111,9 @@ still required: GitHub concurrency does not coordinate jobs outside these calls.
 ## OCI credential action
 
 [`setup-oci`](../.github/actions/setup-oci/action.yml) can also be used directly by
-consumer-owned release or backup workflows. It writes mode-0600 files into an
-isolated runner temporary directory and exports CLI and Terraform authentication
+consumer-owned release or backup workflows. It encrypts the signing key with a
+fresh masked passphrase, writes mode-0600 files into an isolated runner temporary
+directory, and exports CLI and Terraform authentication
 variables. It installs no OCI CLI and creates no cloud resources. Use a separately
 pinned CLI installation if your operation needs it. Follow it with an `always()`
 call to the same action with `cleanup: 'true'`. The Terraform operation action

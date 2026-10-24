@@ -13,6 +13,14 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      if: inputs.cleanup != 'true'
+      with:
+        python-version: '3.12'
+    - name: Install credential encryption dependency
+      if: inputs.cleanup != 'true'
+      shell: bash
+      run: python3 -m pip install 'cryptography==50.0.2'
     - name: Configure isolated OCI credentials
       if: inputs.cleanup != 'true'
       shell: bash

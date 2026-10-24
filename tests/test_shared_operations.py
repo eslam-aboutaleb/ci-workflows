@@ -30,7 +30,8 @@ protection = module('plan_protection', '.github/actions/terraform-operation/prot
 class CompatibilityTests(unittest.TestCase):
     def test_runtime_encryption_dependency_matches_maintained_requirement(self):
         requirement = next(line for line in (ROOT / 'requirements/ci.txt').read_text().splitlines() if line.startswith('cryptography=='))
-        self.assertIn(requirement, (ROOT / '.github/actions/terraform-operation/action.yml').read_text())
+        for action in ['terraform-operation', 'setup-oci']:
+            self.assertIn(requirement, (ROOT / f'.github/actions/{action}/action.yml').read_text())
 
     def test_current_downstream_callers_still_match_shared_interfaces(self):
         callers = json.loads((ROOT / 'tests/fixtures/downstream-callers.json').read_text())
@@ -268,13 +269,22 @@ class ImageTests(unittest.TestCase):
 
 class OCITests(unittest.TestCase):
     def test_credentials_are_isolated_private_and_removed(self):
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        pem = signing_key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
         with tempfile.TemporaryDirectory() as directory:
             env = {'RUNNER_TEMP': directory, 'GITHUB_ENV': str(Path(directory) / 'env')}
             cfg = {'user': 'ocid1.user.test', 'tenancy': 'ocid1.tenancy.test', 'fingerprint': 'ab:cd', 'region': 'eu-frankfurt-1'}
-            values = oci.configure(json.dumps(cfg), '-----BEGIN PRIVATE KEY-----\nfixture\n-----END PRIVATE KEY-----', env)
+            values = oci.configure(json.dumps(cfg), pem, env)
             key = Path(values['OCI_PRIVATE_KEY_PATH'])
             self.assertEqual(key.stat().st_mode & 0o777, 0o600)
-            self.assertNotIn('fixture', Path(env['GITHUB_ENV']).read_text())
+            self.assertIn(b'BEGIN ENCRYPTED PRIVATE KEY', key.read_bytes())
+            self.assertNotIn(pem, Path(env['GITHUB_ENV']).read_text())
+            restored = serialization.load_pem_private_key(key.read_bytes(), password=values['OCI_PRIVATE_KEY_PASSWORD'].encode())
+            self.assertEqual(restored.private_numbers(), signing_key.private_numbers())
+            self.assertEqual(values['OCI_private_key_path'], values['OCI_PRIVATE_KEY_PATH'])
+            self.assertEqual(values['OCI_private_key_password'], values['OCI_PRIVATE_KEY_PASSWORD'])
             oci.cleanup({**env, **values})
             self.assertFalse(key.exists())
             with self.assertRaises(ValueError):
