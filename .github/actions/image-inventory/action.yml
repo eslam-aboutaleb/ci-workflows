@@ -1,0 +1,31 @@
+name: Resolve image inventory
+description: Resolve explicit or Compose images to exact digests and validate requested platforms
+inputs:
+  images:
+    description: JSON array of image references; empty discovers rendered Compose services
+    default: '[]'
+  project-dir:
+    description: Directory containing the Compose files
+    default: .
+  files:
+    description: JSON array of Compose filenames relative to project-dir
+    default: '["compose.yaml"]'
+  platforms:
+    description: Required comma-separated Linux platforms
+    default: linux/arm64
+outputs:
+  matrix:
+    description: Image/platform include matrix with immutable references
+    value: ${{ steps.inventory.outputs.matrix }}
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+    - id: inventory
+      shell: bash
+      env:
+        IMAGES_JSON: ${{ inputs.images }}
+        PROJECT_DIR: ${{ inputs.project-dir }}
+        FILES_JSON: ${{ inputs.files }}
+        PLATFORMS: ${{ inputs.platforms }}
+      run: python3 "$GITHUB_ACTION_PATH/inventory.py"
