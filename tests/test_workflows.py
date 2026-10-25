@@ -276,7 +276,7 @@ class QualityGateTests(unittest.TestCase):
         needs = {name: {'result': 'skipped'} for name in CI['jobs']['quality-gate']['needs']}
         needs['discover'] = {'result': 'success', 'outputs': outputs or {}}
         needs['security'] = {'result': 'success'}
-        needs['commit-messages'] = {'result': 'success' if event in ('pull_request', 'push') else 'skipped'}
+        needs['commit-messages'] = {'result': 'success'}
         needs.update(overrides or {})
         with tempfile.TemporaryDirectory() as directory:
             result = subprocess.run([sys.executable, '-c', GATE], env={**os.environ, 'NEEDS_JSON': json.dumps(needs), 'GITHUB_STEP_SUMMARY': str(Path(directory) / 'summary'), 'EVENT_NAME': event, 'TRUSTED_AI_EVENT': str(trusted).lower()}, capture_output=True, text=True)
@@ -285,8 +285,8 @@ class QualityGateTests(unittest.TestCase):
     def test_unmatched_optional_checks_can_skip(self):
         self.assertEqual(self.gate(), 0)
 
-    def test_commit_messages_are_required_on_prs_and_pushes(self):
-        for event in ('pull_request', 'push'):
+    def test_commit_messages_are_always_required(self):
+        for event in ('pull_request', 'push', 'merge_group', 'workflow_dispatch'):
             with self.subTest(event=event):
                 self.assertNotEqual(self.gate({'commit-messages': {'result': 'skipped'}}, event=event), 0)
                 self.assertNotEqual(self.gate({'commit-messages': {'result': 'failure'}}, event=event), 0)
