@@ -58,7 +58,7 @@ flowchart LR
 
 ## Commit message policy (automatic)
 
-The aggregate workflow now enforces [semantic commit messages](https://gist.github.com/joshbuchea/6f47e86d2510bce28f8e7f42ae84c716) for **every PR commit**, not just the PR title. It also checks commits introduced by pushes to the default branch. The commit-message job is a mandatory dependency of the existing **Quality gate**, so current consumers only need to update their pinned shared-workflow SHA. No configuration file, extra action, or secret is required; the caller already grants `pull-requests: read`.
+The aggregate workflow now enforces [semantic commit messages](https://gist.github.com/joshbuchea/6f47e86d2510bce28f8e7f42ae84c716) for **every PR commit**, not just the PR title. It also checks commits introduced by pushes to the default branch. The commit-message job is a mandatory dependency of the existing **Quality gate**, so aggregate callers only need to update their pinned shared-workflow SHA. No configuration file or secret is required; the documented aggregate caller already grants `pull-requests: read`.
 
 Required first-line format: `<type>(<scope>): <subject>`. Scope is optional; the type must be lowercase and one of `chore`, `docs`, `feat`, `fix`, `refactor`, `style`, or `test`. The subject must be nonempty and start with a non-whitespace character. Commit body/footer content is unrestricted.
 
@@ -74,6 +74,21 @@ test(parser): cover invalid input
 GitHub-generated merge commits (multiple parents) are excluded from message validation; their individual PR commits are checked before merge. Synthetic merge-queue commits and unrelated scheduled, release, or manual events do not revalidate commit subjects. PRs or pushes exceeding GitHub's 250-commit REST API comparison limit fail closed rather than silently passing unchecked commits.
 
 **Enforcement requires a branch ruleset:** configure **quality / Quality gate** as a required status check with PR checks and, if used, merge queue checks enabled. CI reports violations on direct default-branch pushes after the push; branch protection or rulesets must separately prevent bypassing PR review. SHA-pinned consumers will only receive this policy after updating their pin.
+
+### Call commit validation with individual shared jobs
+
+If a consumer calls `python.yml`, `security.yml`, `project-check.yml`, or other individual workflows **instead of the aggregate `ci.yml`**, updating its SHA pins alone does not enable the commit-message gate. Add this job alongside the other jobs in the consumer's existing workflow:
+
+```yaml
+  commit-messages:
+    name: Commit message format
+    uses: eslam-aboutaleb/ci-workflows/.github/workflows/commit-messages.yml@COMMIT_SHA
+    permissions:
+      contents: read
+      pull-requests: read
+```
+
+Use the exact reviewed full SHA used for other shared jobs. Then require the emitted `commit-messages / Commit message format` check (use the actual name displayed in the repository's checks). The calling workflow must run on `pull_request`; include `merge_group` if the repository uses a merge queue. This new reusable workflow does not execute application code or require checkout or additional secrets.
 
 ## Discovery and project configuration
 
@@ -146,7 +161,8 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 
 | Workflow | Required inputs | Behavior |
 | --- | --- | --- |
-| [ci.yml](.github/workflows/ci.yml) | None | Discovery, selected checks, summaries, stable final gate |
+| [ci.yml](.github/workflows/ci.yml) | None | Discovery, selected checks, summaries, stable final gate, commit-message check |
+| [commit-messages.yml](.github/workflows/commit-messages.yml) | None | Check semantic subjects on PR commits and direct pushes; skip unrelated event types |
 | [python.yml](.github/workflows/python.yml) | `project-dir`, `manager` (`uv`/`pip`) | Ruff lint/format, pytest on each Python/OS combination, optional coverage threshold and distributions; JUnit/coverage artifacts |
 | [node.yml](.github/workflows/node.yml) | `project-dir`, `manager` (`npm`/`pnpm`/`bun`) | Frozen install, dependency audit, mandatory lint/typecheck/test/build; optional OS and shard matrices; available test/coverage artifacts |
 | [browser.yml](.github/workflows/browser.yml) | `project-dir`, `manager` | Locked Playwright install, browser or visual script, shards, available reports/traces/screenshots |

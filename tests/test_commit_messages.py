@@ -18,8 +18,10 @@ class CommitMessageTests(unittest.TestCase):
         self.assertIn("commit-messages", workflow["jobs"])
         self.assertIn("commit-messages", workflow["jobs"]["quality-gate"]["needs"])
         job = workflow["jobs"]["commit-messages"]
+        self.assertEqual(job["uses"], "./.github/workflows/commit-messages.yml")
         self.assertEqual(job["permissions"]["pull-requests"], "read")
-        step = next(s for s in job["steps"] if "run" in s)
+        reusable = load(ROOT / ".github/workflows/commit-messages.yml")
+        step = next(s for s in reusable["jobs"]["check"]["steps"] if "run" in s)
         self.program = step["run"].split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
         self.responses = {}
         self.visited = []

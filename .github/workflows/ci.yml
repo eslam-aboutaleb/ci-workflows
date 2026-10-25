@@ -38,125 +38,11 @@ concurrency:
 jobs:
   commit-messages:
     name: Commit message format
-    if: github.event_name == 'pull_request' || github.event_name == 'push'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
-    steps:
-      - name: Check every new commit subject
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_API_URL: ${{ github.api_url }}
-          GH_REPOSITORY: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          PUSH_BEFORE: ${{ github.event.before }}
-          PUSH_AFTER: ${{ github.sha }}
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          from pathlib import Path
-          from urllib.request import Request, urlopen
+    uses: ./.github/workflows/commit-messages.yml
 
-          SUBJECT = re.compile(
-              r'^(?:chore|docs|feat|fix|refactor|style|test)'
-              r'(?:\([A-Za-z0-9._/-]+\))?: \S.*$'
-          )
-          SHA = re.compile(r'^[0-9a-f]{40}$')
-
-          def require(condition, message):
-              if not condition:
-                  print(f'::error::{message}')
-                  raise SystemExit(1)
-
-          def api(path):
-              request = Request(
-                  f"{os.environ['GH_API_URL'].rstrip('/')}/repos/{os.environ['GH_REPOSITORY']}/{path}",
-                  headers={
-                      'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
-                      'Accept': 'application/vnd.github+json',
-                      'X-GitHub-Api-Version': '2022-11-28',
-                  },
-              )
-              with urlopen(request, timeout=20) as response:
-                  return json.load(response)
-
-          def pull_request_commits():
-              number = os.environ['PR_NUMBER']
-              require(number.isdecimal(), 'Missing pull request number')
-              total = api(f'pulls/{number}').get('commits')
-              # GitHub limits the PR commits REST endpoint to 250 results.
-              require(type(total) is int and 0 < total <= 250,
-                      'Pull request has no commits or exceeds the API limit of 250; split the PR')
-              commits = []
-              for page in range(1, (total + 99) // 100 + 1):
-                  result = api(f'pulls/{number}/commits?per_page=100&page={page}')
-                  require(isinstance(result, list), 'Unexpected PR commit API response')
-                  commits.extend(result)
-              require(len(commits) == total, 'Pull request commit listing is incomplete')
-              return commits
-
-          def pushed_commits():
-              before = os.environ['PUSH_BEFORE'].lower()
-              after = os.environ['PUSH_AFTER'].lower()
-              require(bool(SHA.fullmatch(before) and SHA.fullmatch(after)),
-                      'Missing or invalid push range SHA')
-              if before == '0' * 40:
-                  # A repository's first push has no parent for the compare API.
-                  event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
-                  entries = event.get('commits')
-                  require(isinstance(entries, list) and type(event.get('size')) is int
-                          and len(entries) == event['size'],
-                          'Initial push commit payload is incomplete; cannot enforce the policy')
-                  return [
-                      {'sha': entry['id'], 'commit': {'message': entry['message']}, 'parents': []}
-                      for entry in entries
-                  ]
-
-              path = f'compare/{before}...{after}?per_page=100&page=1'
-              first = api(path)
-              total = first.get('total_commits')
-              # Fail closed rather than silently approve a truncated comparison.
-              require(type(total) is int and 0 <= total <= 250,
-                      'Push comparison exceeds the limit of 250 commits; split the push')
-              commits = list(first.get('commits', []))
-              for page in range(2, (total + 99) // 100 + 1):
-                  page_data = api(f'compare/{before}...{after}?per_page=100&page={page}')
-                  commits.extend(page_data.get('commits', []))
-              require(len(commits) == total, 'Push commit comparison is incomplete')
-              return commits
-
-          event = os.environ['EVENT_NAME']
-          if event == 'pull_request':
-              commits = pull_request_commits()
-          elif event == 'push':
-              commits = pushed_commits()
-          else:
-              print(f'No authored commit subjects to validate for {event}')
-              commits = []
-
-          failures = []
-          for item in commits:
-              # GitHub-generated merge commits contain multiple parents; their
-              # individual PR commits are validated on pull_request events.
-              if len(item.get('parents', [])) > 1:
-                  continue
-              subject = item['commit']['message'].split('\n', 1)[0].rstrip('\r')
-              if not SUBJECT.fullmatch(subject):
-                  safe_subject = subject.replace('%', '%25').replace('\r', '%0D')
-                  failures.append((item['sha'][:12], safe_subject))
-                  print(f"::error::{item['sha'][:12]}: invalid commit subject: {safe_subject!r}")
-          if failures:
-              print('Required: <type>(<optional-scope>): <subject>')
-              print('Allowed types: chore, docs, feat, fix, refactor, style, test')
-              raise SystemExit(1)
-          print(f'Validated {len(commits)} commits ({event}); merge commits exempt')
-          PY
   discover:
     name: Discover project checks
     runs-on: ubuntu-latest
@@ -677,7 +563,7 @@ jobs:
           import json, os
           needs = json.loads(os.environ['NEEDS_JSON'])
           outputs = needs.get('discover', {}).get('outputs', {})
-          expected = {'commit-messages': os.environ['EVENT_NAME'] in {'pull_request', 'push'}, 'discover': True}
+          expected = {'commit-messages': True, 'discover': True}
           for job, output in {'python': 'python-projects', 'node': 'node-projects', 'playwright': 'playwright-projects', 'docker': 'dockerfiles', 'compose': 'compose-projects', 'terraform': 'terraform-projects', 'project-checks': 'project-checks', 'integration': 'integration-projects'}.items():
               expected[job] = bool(json.loads(outputs.get(output, '[]')))
           expected['ai-evaluations'] = bool(json.loads(outputs.get('ai-evaluation-projects', '[]'))) and os.environ['TRUSTED_AI_EVENT'] == 'true'
