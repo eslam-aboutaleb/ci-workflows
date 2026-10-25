@@ -355,3 +355,21 @@ independent review and checklist sections. Verification is explicitly pending
 until downstream checks complete; the bot never claims application tests or
 independent review passed. Each PR includes the changed pins and upstream compare
 links for maintainer review.
+
+
+### Pull request description schema
+
+`pr-description.yml` enforces the same six-section description contract as ragnor
+(ragit): Description, Type of Change, Behavior and Compatibility, Verification
+Evidence, Independent Review and Checklist. It requires exactly one official
+change type, all checklist items, and concrete test evidence with a result or an
+explicit pending/unverified status. Copy `.github/pull_request_template.md` into
+consumers and call the reusable workflow on pull request `opened`, `edited`,
+`reopened`, `synchronize` and `ready_for_review` events. Description edits rerun
+validation without a new commit. As in ragit, automation accounts ending in
+`[bot]` are exempt; PAT-authored publishing PRs still validate.
+
+The validator reads the event JSON as data and executes no consumer checkout or
+PR-provided code. The inline workflow implementation is checked against
+`scripts/check_pr_description.py` in the regression suite. Configure its status
+as required on `main` to prevent merging descriptions that fail validation.
