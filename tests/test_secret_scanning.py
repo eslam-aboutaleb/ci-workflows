@@ -37,7 +37,7 @@ class SecretScanningTests(unittest.TestCase):
             report = root / 'report.json'
 
             def scan():
-                return subprocess.run(['gitleaks', 'git', '--config', str(config), '--redact=100', '--log-opts=--all', '--report-format=json', '--report-path', str(report), '.'], cwd=repo, capture_output=True, text=True)
+                return subprocess.run(['gitleaks', 'git', '--config', str(config), '--redact=100', '--log-opts=HEAD', '--report-format=json', '--report-path', str(report), '.'], cwd=repo, capture_output=True, text=True)
 
             (repo / 'example.txt').write_text('DATABASE_URL=postgresql://user:your_password@localhost/test\nDATABASE_URL=postgresql://omnicare:omnicare_password@localhost/omnicare_test\nDATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-omnicare}:${POSTGRES_PASSWORD}@db/test\n')
             commit()

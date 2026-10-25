@@ -302,7 +302,7 @@ Repository tooling uses uv and a local `.venv`. Install uv, then run `make ci-in
 `security.yml` and aggregate `ci.yml` enable Gitleaks by default. Set
 `security.enable-gitleaks` to `false` only when deliberately opting out.
 The standalone `secret-scanning.yml` can also be called with `contents: read`
-and no secrets. It scans all fetched Git history, extends Gitleaks' built-in
+and no secrets. It scans the complete history reachable from the checked-out commit, extends Gitleaks' built-in
 API key/token rules with database connection password detection, verifies the
 download checksum, and redacts findings. The shared policy cannot be replaced
 by a caller's `.gitleaks.toml`. Only documented disposable passwords and template
