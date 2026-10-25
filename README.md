@@ -373,3 +373,19 @@ The validator reads the event JSON as data and executes no consumer checkout or
 PR-provided code. The inline workflow implementation is checked against
 `scripts/check_pr_description.py` in the regression suite. Configure its status
 as required on `main` to prevent merging descriptions that fail validation.
+
+
+### Pull requests with merge conflicts
+
+Use `pull_request` for PR checks and restrict `push.branches` to `[main]` in
+consuming callers, as shown in `.github/examples/caller.yml`. GitHub does not
+start `pull_request` runs while a PR has merge conflicts. Unrestricted branch
+`push` triggers bypass that suppression, including when they call a reusable
+workflow. Trigger filters belong in the caller; the callee cannot prevent a
+caller workflow from starting. The contract checker enforces this policy for
+this repository's workflows and caller examples.
+
+Do not use `pull_request_target` for these checks. Existing runs are not
+retroactively canceled when a base update introduces conflicts. Manual,
+scheduled, release and main-branch runs remain available independently of PR
+mergeability. Resolve conflicts and push the resolution to resume PR checks.
