@@ -107,6 +107,7 @@
       "contents": "read"
     },
     "jobs": {
+      "commit-messages": "Commit message format",
       "discover": "Discover project checks",
       "python": "Python (${{ matrix.project.project_dir }})",
       "node": "Node (${{ matrix.project.project_dir }})",
