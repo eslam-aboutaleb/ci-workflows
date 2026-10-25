@@ -39,7 +39,7 @@ class SecretScanningTests(unittest.TestCase):
             def scan():
                 return subprocess.run(['gitleaks', 'git', '--config', str(config), '--redact=100', '--log-opts=HEAD', '--report-format=json', '--report-path', str(report), '.'], cwd=repo, capture_output=True, text=True)
 
-            (repo / 'example.txt').write_text('DATABASE_URL=postgresql://user:your_password@localhost/test\nDATABASE_URL=postgresql://omnicare:omnicare_password@localhost/omnicare_test\nDATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-omnicare}:${POSTGRES_PASSWORD}@db/test\n')
+            (repo / 'example.txt').write_text('DATABASE_URL=postgresql://user:your_password@localhost/test\nDATABASE_URL=postgresql://user:pass@host/db\nDATABASE_URL=postgresql+asyncpg://omnicare:omnicare_password@{DB_HOST}:5432/test\nDATABASE_URL=postgresql://omnicare:omnicare_password@localhost/omnicare_test\nDATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-omnicare}:${POSTGRES_PASSWORD}@db/test\n')
             commit()
             self.assertEqual(scan().returncode, 0)
             # A caller-owned policy must not disable centrally enforced detection.
