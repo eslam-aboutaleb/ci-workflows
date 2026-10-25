@@ -67,6 +67,7 @@ jobs:
               r'^(?:chore|docs|feat|fix|refactor|style|test)'
               r'(?:\([A-Za-z0-9._/-]+\))?: \S.*$'
           )
+          SHA = re.compile(r'^[0-9a-f]{40}$')
 
           def require(condition, message):
               if not condition:
