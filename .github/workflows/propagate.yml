@@ -11,7 +11,7 @@ on:
         type: string
         default: ''
       repository:
-        description: Optional single owner/repo to update (defaults to all in .github/downstream.json)
+        description: Optional single owner/repo to update (defaults to all in CI_DOWNSTREAM_REPOSITORIES)
         required: false
         type: string
         default: ''
@@ -45,6 +45,7 @@ jobs:
       - name: Propagate workflow SHA to downstream repositories
         env:
           GH_TOKEN: ${{ secrets.CI_PROPAGATION_TOKEN }}
+          CI_DOWNSTREAM_REPOSITORIES: ${{ secrets.CI_DOWNSTREAM_REPOSITORIES }}
           EVENT_NAME: ${{ github.event_name }}
           TARGET_SHA: ${{ inputs.target-sha || github.sha }}
           TARGET_REPO: ${{ inputs.repository || '' }}

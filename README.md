@@ -181,7 +181,7 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 | [publish-docker.yml](.github/workflows/publish-docker.yml) | `image` | Event validation, image build validation, approved GHCR publication, provenance, SBOM and digest output |
 | [publish-pypi.yml](.github/workflows/publish-pypi.yml) | `project-dir`, `distribution-name` | Match release tag to package metadata, build/check distributions, approved publication using `PYPI_API_TOKEN` |
 | [validate.yml](.github/workflows/validate.yml) | Repository maintenance only | Actionlint, shared contract checks, discovery and gate regression tests |
-| [propagate.yml](.github/workflows/propagate.yml) | Repository maintenance only | Automatically open PRs updating pinned `ci-workflows` SHAs across downstream repositories listed in `.github/downstream.json` |
+| [propagate.yml](.github/workflows/propagate.yml) | Repository maintenance only | Automatically open PRs updating pinned `ci-workflows` SHAs across downstream repositories registered in the `CI_DOWNSTREAM_REPOSITORIES` Actions secret |
 | [operations-smoke.yml](.github/workflows/operations-smoke.yml) | Repository maintenance only | Real local-state Terraform plan/apply and public multi-platform image verification |
 
 The new image and remote-state workflows are separate explicit calls. They do not
@@ -329,3 +329,29 @@ inline annotations for fixtures that must survive squash merges, since commit
 fingerprints change after squashing. Never exempt whole directories or genuine
 credentials. Require the scanner check in the consuming repository's ruleset;
 rotate any actually exposed credential at its provider.
+
+
+### Downstream publishing bot
+
+Configure repository Actions secrets in `eslam-aboutaleb/ci-workflows`:
+
+- `CI_PROPAGATION_TOKEN`: a token allowed to read downstream repositories, push
+  workflow changes and open/update pull requests (including workflow write permission).
+- `CI_DOWNSTREAM_REPOSITORIES`: the authoritative JSON registry, with format
+  `{"version":1,"repositories":[{"repo":"owner/project"}]}`. String entries
+  (`"owner/project"`) are also accepted. Preserve existing entries when adding callers.
+
+Set the registry using `gh secret set CI_DOWNSTREAM_REPOSITORIES --repo
+eslam-aboutaleb/ci-workflows < registry.json` from a private local file. The
+registry is no longer committed to this repository; do not commit that local file.
+Automatic propagation and all-repository dry runs fail if the registry is missing,
+empty or invalid. An explicit dispatch `repository` override targets just that
+repository without loading the registry. Dry runs still need read access for
+private repositories. Adding a registry entry does not install workflows: each
+consumer must first call a reusable workflow using a full commit SHA.
+
+Generated PRs include description, change type, compatibility, verification,
+independent review and checklist sections. Verification is explicitly pending
+until downstream checks complete; the bot never claims application tests or
+independent review passed. Each PR includes the changed pins and upstream compare
+links for maintainer review.

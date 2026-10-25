@@ -72,7 +72,7 @@ class CompatibilityTests(unittest.TestCase):
         old = module('legacy_check', '.github/scripts/check_workflows.py')
         self.assertEqual(old.ROOT, ROOT)
         old = module('legacy_propagation', '.github/scripts/propagate_updates.py')
-        self.assertEqual(old.DOWNSTREAM_CONFIG, ROOT / '.github/downstream.json')
+        self.assertEqual(old.DOWNSTREAM_SECRET, 'CI_DOWNSTREAM_REPOSITORIES')
 
 
 class ProvenanceTests(unittest.TestCase):
