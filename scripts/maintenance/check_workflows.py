@@ -21,12 +21,27 @@ def load(path):
     return yaml.load(path.read_text(), Loader=WorkflowLoader)
 
 
+def check_conflict_safe_triggers(workflow, name):
+    """Let GitHub suppress conflicted PR runs without a branch-push bypass."""
+    events = workflow['on']
+    assert 'pull_request_target' not in events, name
+    if 'push' in events:
+        push = events['push']
+        assert isinstance(push, dict) and push.get('branches') == ['main'], (
+            name, 'Use pull_request for branch CI and limit push to main; '
+            'branch pushes run even when a PR has merge conflicts',
+        )
+        assert 'tags' not in push and 'tags-ignore' not in push, (
+            name, 'Use release for publication instead of a separate tag-push trigger',
+        )
+
+
 def check():
     workflows = {path.name: load(path) for path in sorted((ROOT / '.github/workflows').glob('*.yml'))}
     for name, workflow in workflows.items():
         assert isinstance(workflow, dict) and workflow.get('jobs'), name
         assert workflow['permissions'] == {'contents': 'read'}, name
-        assert 'pull_request_target' not in workflow['on'], name
+        check_conflict_safe_triggers(workflow, name)
         if name not in {'ci.yml', 'validate.yml', 'propagate.yml', 'operations-smoke.yml', 'pr-description.yml'}:
             assert set(workflow['on']) == {'workflow_call'}, name
         for job_id, job in workflow['jobs'].items():
@@ -77,6 +92,9 @@ def check():
             if 'uses' in step:
                 assert re.fullmatch(r'[\w.-]+/[\w./-]+@[0-9a-f]{40}', step['uses']), (path, step['uses'])
         print(f'Contract OK: {path.parent.name} composite action')
+    for directory in [ROOT / '.github/examples', ROOT / 'examples']:
+        for path in directory.rglob('*.yml'):
+            check_conflict_safe_triggers(load(path), str(path.relative_to(ROOT)))
     jobs = workflows['ci.yml']['jobs']
     gate = jobs['quality-gate']
     assert gate['name'] == 'Quality gate' and gate['if'] == 'always()'
