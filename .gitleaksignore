@@ -1,2 +1,0 @@
-# Exact synthetic remote-password fixture used to test the scanner itself.
-ea8caed4e4003f65d7301b4918c01cfad703aa53:tests/test_secret_scanning.py:database-connection-password:49

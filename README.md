@@ -299,15 +299,33 @@ Repository tooling uses uv and a local `.venv`. Install uv, then run `make ci-in
 
 ### Database credentials and token scanning
 
-`security.yml` and aggregate `ci.yml` enable Gitleaks by default. Set
-`security.enable-gitleaks` to `false` only when deliberately opting out.
-The standalone `secret-scanning.yml` can also be called with `contents: read`
-and no secrets. It scans the complete history reachable from the checked-out commit, extends Gitleaks' built-in
-API key/token rules with database connection password detection, verifies the
-download checksum, and redacts findings. The shared policy cannot be replaced
-by a caller's `.gitleaks.toml`. Only documented disposable passwords and template
-values are excluded from the database rule. Use individual `.gitleaksignore`
-fingerprints for verified synthetic fixtures; never ignore whole test directories.
-A failed scan must block merging through the consuming repository's ruleset.
-Previously exposed credentials must be rotated at their provider; storing them
-in Actions secrets does not revoke them or remove them from Git history.
+`security.yml` and aggregate `ci.yml` enable Gitleaks by default. The standalone
+`secret-scanning.yml` requires only `contents: read` and no application secrets.
+The caller chooses triggers; scheduled and manual full audits run only when the
+caller defines those events.
+
+PR, push, and merge-queue checks scan every introduced commit using GitHub's
+base/head SHAs. A credential added and then deleted within that range still
+fails. Scheduled/manual audits and events without an available base scan the
+complete history reachable from the checked-out commit. Existing historical
+findings therefore do not block an unrelated PR, while full audits still expose
+them. New branches and unavailable force-push bases fall back to a full audit.
+
+The shared policy extends Gitleaks' built-in token rules and detects passwords in
+database URLs. Its exceptions are independent of any application: environment
+references, conventional disposable values on loopback/local service hosts, and
+conventional example values on reserved documentation domains. A real-looking
+credential still fails on localhost or an example domain; conventional test
+values still fail on real remote hosts. Explicit synthetic markers and public
+40-hex blockchain addresses are excluded only from the generic API-key heuristic;
+provider-specific token rules remain active, including in tests and examples.
+No directory is excluded just because it contains tests or documentation.
+
+Failures print the rule, path, line, and fingerprint with credentials redacted.
+The downloaded scanner checksum is verified. A caller's `.gitleaks.toml` cannot
+replace the central policy. For remaining verified false positives, use a narrow
+inline `gitleaks:allow` comment or an exact `.gitleaksignore` fingerprint. Prefer
+inline annotations for fixtures that must survive squash merges, since commit
+fingerprints change after squashing. Never exempt whole directories or genuine
+credentials. Require the scanner check in the consuming repository's ruleset;
+rotate any actually exposed credential at its provider.
