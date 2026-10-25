@@ -501,10 +501,10 @@
           "default": ""
         },
         "enable-gitleaks": {
-          "description": "Run Gitleaks secret detection",
+          "description": "Run Gitleaks secret detection (enabled by default)",
           "required": "false",
           "type": "boolean",
-          "default": "false"
+          "default": "true"
         }
       }
     },

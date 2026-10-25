@@ -359,7 +359,7 @@ jobs:
               outputs[name] = values
               lines.append(f'| {name} | {total} | {len(values)} |')
           if workspace_members: lines.extend(['', 'Workspace members are covered by their root CI scripts:', *[f'- {member}' for member in workspace_members]])
-          outputs.update({'codeql-languages': sorted(languages), 'security-options': {'config-file': '', 'build-command': '', 'enable-gitleaks': False, **security}, 'workflow-files': workflow_files, 'pypi-projects': pypi_projects})
+          outputs.update({'codeql-languages': sorted(languages), 'security-options': {'config-file': '', 'build-command': '', 'enable-gitleaks': True, **security}, 'workflow-files': workflow_files, 'pypi-projects': pypi_projects})
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               for name, value in outputs.items(): output.write(f'{name}={json.dumps(value, separators=(",", ":"))}\n')
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
