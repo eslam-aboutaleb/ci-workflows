@@ -46,6 +46,7 @@ class SecretScanningTests(unittest.TestCase):
             (repo / '.gitleaks.toml').write_text('title="empty caller policy"\n')
             test_values = ['s3nsitive' + 'DatabasePassword982']
             lines = [f'DATABASE_URL={scheme}://app:{test_values[0]}@db.example.invalid/app' for scheme in ('postgresql+asyncpg', 'mysql', 'mongodb+srv', 'rediss')]
+            lines.append('DATABASE_URL=postgresql://app:password@db.example.invalid/app')
             lines.append('GITHUB_TOKEN=' + 'ghp_' + 'AbCdEf0123456789' * 2 + 'ABcd')
             (repo / 'leak.txt').write_text('\n'.join(lines))
             commit()
@@ -55,6 +56,6 @@ class SecretScanningTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1, result.stderr)
             findings = json.loads(report.read_text())
             rules = [item['RuleID'] for item in findings]
-            self.assertGreaterEqual(rules.count('database-connection-password'), 4)
+            self.assertGreaterEqual(rules.count('database-connection-password'), 5)
             self.assertIn('github-pat', rules)
             self.assertNotIn(test_values[0], result.stdout + result.stderr + report.read_text())
