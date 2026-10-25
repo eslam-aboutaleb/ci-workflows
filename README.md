@@ -296,3 +296,18 @@ workflow paths and the public schema URL remain stable. The
 folder boundaries.
 
 Repository tooling uses uv and a local `.venv`. Install uv, then run `make ci-install` and `make ci-quality` (Python 3.11 or newer). Refresh the universal, hash-locked dependencies with `make lock` after editing `requirements/ci.in`. Existing `manager: pip`, `pip-extras`, and `pip-constraints` inputs remain supported; their installations now use uv’s pip-compatible interface. Distribution builds also use uv for isolated build dependencies.
+
+### Database credentials and token scanning
+
+`security.yml` and aggregate `ci.yml` enable Gitleaks by default. Set
+`security.enable-gitleaks` to `false` only when deliberately opting out.
+The standalone `secret-scanning.yml` can also be called with `contents: read`
+and no secrets. It scans the complete history reachable from the checked-out commit, extends Gitleaks' built-in
+API key/token rules with database connection password detection, verifies the
+download checksum, and redacts findings. The shared policy cannot be replaced
+by a caller's `.gitleaks.toml`. Only documented disposable passwords and template
+values are excluded from the database rule. Use individual `.gitleaksignore`
+fingerprints for verified synthetic fixtures; never ignore whole test directories.
+A failed scan must block merging through the consuming repository's ruleset.
+Previously exposed credentials must be rotated at their provider; storing them
+in Actions secrets does not revoke them or remove them from Git history.

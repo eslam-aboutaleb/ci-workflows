@@ -22,10 +22,10 @@ on:
         type: string
         default: ''
       enable-gitleaks:
-        description: Run Gitleaks secret detection
+        description: Run Gitleaks secret detection (enabled by default)
         required: false
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
@@ -101,19 +101,6 @@ jobs:
   secrets:
     name: Secret scan (Gitleaks)
     if: inputs.enable-gitleaks
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
     permissions:
       contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 0
-      - name: Install and run Gitleaks
-        shell: bash
-        run: |
-          set -euo pipefail
-          GITLEAKS_VERSION="8.24.2"
-          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | sudo tar -xz -C /usr/local/bin gitleaks
-          gitleaks git --redact --verbose --exit-code 1 .
+    uses: ./.github/workflows/secret-scanning.yml
