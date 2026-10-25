@@ -56,6 +56,25 @@ flowchart LR
     G --> H[Explicitly enabled PyPI release]
 ```
 
+## Commit message policy (automatic)
+
+The aggregate workflow now enforces [semantic commit messages](https://gist.github.com/joshbuchea/6f47e86d2510bce28f8e7f42ae84c716) for **every PR commit**, not just the PR title. It also checks commits introduced by pushes to the default branch. The commit-message job is a mandatory dependency of the existing **Quality gate**, so current consumers only need to update their pinned shared-workflow SHA. No configuration file, extra action, or secret is required; the caller already grants `pull-requests: read`.
+
+Required first-line format: `<type>(<scope>): <subject>`. Scope is optional; the type must be lowercase and one of `chore`, `docs`, `feat`, `fix`, `refactor`, `style`, or `test`. The subject must be nonempty and start with a non-whitespace character. Commit body/footer content is unrestricted.
+
+```text
+feat: add user authentication
+fix(api): handle timeout
+docs: describe setup
+test(parser): cover invalid input
+```
+
+`build: update dependencies`, `Feat: add login`, `feat add login`, `fix:`, and `feat!: break API` are **not accepted** by this seven-type policy. Use `chore:` for build/CI/dependency updates. Fix an existing commit with `git commit --amend -m "fix: describe change"`, or an earlier commit with interactive rebase; force-push only your own PR branch after coordinating with collaborators. For squash merges, use a compliant squash commit subject (typically the PR title).
+
+GitHub-generated merge commits (multiple parents) are excluded from message validation; their individual PR commits are checked before merge. Synthetic merge-queue commits and unrelated scheduled, release, or manual events do not revalidate commit subjects. PRs or pushes exceeding GitHub's 250-commit REST API comparison limit fail closed rather than silently passing unchecked commits.
+
+**Enforcement requires a branch ruleset:** configure **quality / Quality gate** as a required status check with PR checks and, if used, merge queue checks enabled. CI reports violations on direct default-branch pushes after the push; branch protection or rulesets must separately prevent bypassing PR review. SHA-pinned consumers will only receive this policy after updating their pin.
+
 ## Discovery and project configuration
 
 The aggregate workflow accepts `config-file` (default `.github/ci.json`) and `changes-only` (default `false`). Configuration is optional. Invalid JSON or TOML, duplicate JSON keys, unknown options, conflicting lockfiles, and settings for nonexistent projects fail discovery before checks start. A job summary records the discovered and selected checks.
