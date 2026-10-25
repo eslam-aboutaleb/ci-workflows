@@ -21,7 +21,6 @@ Existing workflow paths and the configuration schema remain stable.
     setup-oci/               Isolated OCI API-key credentials and cleanup
     terraform-operation/     Shared execution, provenance and plan encryption
   ci.schema.json             Stable public schema URL
-  downstream.json            Existing downstream registration
   examples/                  Existing adoption examples; paths retained
   scripts/                   Compatibility entry points for old maintenance commands
 scripts/maintenance/         Canonical contract checker and propagation implementation
@@ -69,7 +68,7 @@ action references to test the current implementation.
   remain unchanged in this migration.
 - Introduce capabilities through new opt-in workflows. Do not add production
   credentials or infrastructure operations to discovery or the quality gate.
-- Retain `.github/ci.schema.json`, `.github/downstream.json`, `.github/examples/`,
+- Retain `.github/ci.schema.json`, `.github/examples/`,
   the old maintenance script commands and `.github/requirements-ci.txt` URLs.
 - When updating shared action code, commit the action implementation first, then
   update the affected workflows' full SHA pins to that commit. Keep both commits
@@ -98,3 +97,5 @@ disposable local and loopback HTTP Terraform state, fresh checkouts with a simul
 provider release, and repeated public multi-platform image scans; they need
 no cloud credentials. Cloud-specific backend access still requires a consumer
 integration run with its own environment and credentials.
+
+Downstream registration is stored in the `CI_DOWNSTREAM_REPOSITORIES` repository Actions secret and read by the propagation bot at runtime.

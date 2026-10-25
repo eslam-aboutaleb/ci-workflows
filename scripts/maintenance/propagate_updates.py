@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
-DOWNSTREAM_CONFIG = ROOT / '.github/downstream.json'
+DOWNSTREAM_SECRET = 'CI_DOWNSTREAM_REPOSITORIES'
 SHA_PATTERN = re.compile(r'^[0-9a-f]{40}$')
 REPO_PATTERN = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 WORKFLOW_REF_PATTERN = re.compile(
@@ -25,26 +25,33 @@ def validate_sha(sha: str) -> str:
     return value
 
 
-def load_downstream(config_path: Path = DOWNSTREAM_CONFIG) -> list[dict]:
-    data = json.loads(config_path.read_text())
+def load_downstream() -> list[dict]:
+    """Read the versioned registry exclusively from the repository Actions secret."""
+    raw = os.environ.get(DOWNSTREAM_SECRET, '')
+    if not raw.strip():
+        raise ValueError(f'Secret {DOWNSTREAM_SECRET} is required')
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        raise ValueError(f'Secret {DOWNSTREAM_SECRET} must contain valid JSON') from None
     if not isinstance(data, dict) or data.get('version') != 1:
-        raise ValueError('downstream.json must be an object with version: 1')
-    entries = data.get('repositories', [])
-    if not isinstance(entries, list):
-        raise ValueError('downstream.json repositories must be a list')
+        raise ValueError('Downstream registry must be an object with version: 1')
+    entries = data.get('repositories')
+    if not isinstance(entries, list) or not entries:
+        raise ValueError('Downstream registry repositories must be a non-empty list')
     normalized = []
     seen = set()
     for item in entries:
         if isinstance(item, str):
             item = {'repo': item}
         if not isinstance(item, dict) or 'repo' not in item:
-            raise ValueError(f'Invalid downstream repository entry: {item!r}')
+            raise ValueError('Invalid downstream repository entry')
         repo = item['repo']
         if not isinstance(repo, str) or not REPO_PATTERN.fullmatch(repo):
-            raise ValueError(f'Invalid repository slug: {repo!r}')
-        if repo in seen:
-            raise ValueError(f'Duplicate downstream repository: {repo}')
-        seen.add(repo)
+            raise ValueError('Invalid downstream repository slug')
+        if repo.lower() in seen:
+            raise ValueError('Duplicate downstream repository')
+        seen.add(repo.lower())
         normalized.append({'repo': repo})
     return normalized
 
@@ -91,7 +98,7 @@ def format_pr_body(target_sha: str, file_changes: dict[str, list[tuple[str, str]
     short_sha = target_sha[:12]
     old_shas = sorted({old_sha for changes in file_changes.values() for _, old_sha in changes})
     lines = [
-        '## Summary',
+        '## Description',
         '',
         f'Automated update pinning reusable workflows from [`eslam-aboutaleb/ci-workflows`](https://github.com/eslam-aboutaleb/ci-workflows) to [`{short_sha}`](https://github.com/eslam-aboutaleb/ci-workflows/commit/{target_sha}).',
         '',
@@ -111,6 +118,44 @@ def format_pr_body(target_sha: str, file_changes: dict[str, list[tuple[str, str]
             lines.append(
                 f'- [`{old_sha[:12]}...{short_sha}`](https://github.com/eslam-aboutaleb/ci-workflows/compare/{old_sha}...{target_sha})'
             )
+    lines.extend([
+        '',
+        '## Type of Change',
+        '',
+        '- [ ] Bug fix (non-breaking change which fixes an issue)',
+        '- [ ] New feature (non-breaking change which adds functionality)',
+        '- [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)',
+        '- [ ] Documentation update',
+        '- [ ] Performance improvement',
+        '- [x] CI/CD or tooling enhancement',
+        '',
+        '## Behavior and Compatibility',
+        '',
+        'Before: reusable CI jobs reference the previous SHAs listed above. '
+        'After: those jobs execute the target upstream revision. '
+        'Application source is unchanged; workflow inputs, permissions, secrets, '
+        'runner behavior and required checks must be reviewed in the upstream diffs before merging.',
+        '',
+        '## Verification Evidence',
+        '',
+        'The propagation script found and replaced the full commit pins listed above. '
+        'Downstream CI, including tests/ and workflow validation, is pending. '
+        'Application tests, ruff and runtime compatibility checks were not run by the publishing bot; '
+        'their results must be confirmed on this PR.',
+        '',
+        '## Independent Review',
+        '',
+        'Pending maintainer review of the upstream changes, caller compatibility and downstream CI. '
+        'The publishing bot does not provide independent approval.',
+        '',
+        '## Checklist',
+        '',
+        "- [ ] My code adheres to the project's coding style guidelines (`ruff check .` and `ruff format --check .`)",
+        '- [ ] Changed runtime contracts and compatibility requirements are documented above (or N/A explained)',
+        '- [ ] Behavioral tests exercise the changed component boundaries and relevant failure scenarios (or N/A explained)',
+        '- [x] Verification commands, results, and skipped checks are recorded above',
+        '- [ ] I have updated documentation where appropriate',
+    ])
     return '\n'.join(lines) + '\n'
 
 
@@ -167,6 +212,8 @@ def propagate_to_repo(repo: str, target_sha: str, *, dry_run: bool = False) -> d
         _run(['git', 'push', '--force', 'origin', f'HEAD:refs/heads/{branch_name}'], cwd=clone_dir)
 
         pr_body = format_pr_body(target_sha, file_changes)
+        body_path = Path(tmp) / 'pr-body.md'
+        body_path.write_text(pr_body, encoding='utf-8')
         existing_raw = _run(
             ['gh', 'pr', 'list', '--repo', repo, '--head', branch_name, '--state', 'open', '--json', 'number,url'],
             cwd=clone_dir,
@@ -176,7 +223,7 @@ def propagate_to_repo(repo: str, target_sha: str, *, dry_run: bool = False) -> d
             pr_url = existing[0]['url']
             pr_number = str(existing[0]['number'])
             _run(
-                ['gh', 'pr', 'edit', pr_number, '--repo', repo, '--title', commit_title, '--body', pr_body],
+                ['gh', 'pr', 'edit', pr_number, '--repo', repo, '--title', commit_title, '--body-file', str(body_path)],
                 cwd=clone_dir,
             )
             status = 'updated-existing-pr'
@@ -188,7 +235,7 @@ def propagate_to_repo(repo: str, target_sha: str, *, dry_run: bool = False) -> d
                     '--base', default_branch,
                     '--head', branch_name,
                     '--title', commit_title,
-                    '--body', pr_body,
+                    '--body-file', str(body_path),
                 ],
                 cwd=clone_dir,
             ).stdout.strip()

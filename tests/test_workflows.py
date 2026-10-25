@@ -310,7 +310,7 @@ class QualityGateTests(unittest.TestCase):
 
 class PropagationTests(unittest.TestCase):
     def test_update_repo_tree_replaces_only_ci_workflows_pins(self):
-        from scripts.maintenance.propagate_updates import format_pr_body, load_downstream, update_repo_tree
+        from scripts.maintenance.propagate_updates import format_pr_body, update_repo_tree
         target_sha = 'a' * 40
         old_sha_1 = '1' * 40
         old_sha_2 = '2' * 40
@@ -342,7 +342,6 @@ class PropagationTests(unittest.TestCase):
             body = format_pr_body(target_sha, changes)
             self.assertIn(target_sha[:12], body)
             self.assertIn(f'compare/{old_sha_1}...{target_sha}', body)
-        self.assertGreaterEqual(len(load_downstream()), 3)
 
 
 if __name__ == '__main__':
