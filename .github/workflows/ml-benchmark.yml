@@ -1,0 +1,171 @@
+name: ML and gateway benchmark
+
+on:
+  workflow_call:
+    inputs:
+      project-dir:
+        description: Directory containing the benchmark Makefile, relative to repository root
+        required: false
+        type: string
+        default: '.'
+      target:
+        description: Make target that executes the ML benchmark after ci-install
+        required: false
+        type: string
+        default: ci-benchmark
+      python-version:
+        description: Python version for the benchmark runner
+        required: false
+        type: string
+        default: '3.11'
+      provider:
+        description: Cloud model provider route (litellm, openai, or gemini)
+        required: false
+        type: string
+        default: openai
+      dataset:
+        description: Benchmark dataset identifier passed as BENCHMARK_DATASET
+        required: false
+        type: string
+        default: textoir_banking77
+      gateway-base-url:
+        description: Optional LLM Gateway base URL exposed as LLM_GATEWAY_BASE_URL
+        required: false
+        type: string
+        default: ''
+      report-file:
+        description: Markdown report relative to project-dir appended to job summary and uploaded
+        required: false
+        type: string
+        default: BENCHMARK_REPORT.md
+      artifacts-dir:
+        description: Generated plots and metrics directory relative to project-dir uploaded as artifacts
+        required: false
+        type: string
+        default: data/artifacts
+    secrets:
+      llm-gateway-api-key:
+        description: Optional virtual key exposed as LLM_GATEWAY_API_KEY and AI_EVAL_API_KEY
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: ML benchmark (${{ inputs.provider }} / ${{ inputs.dataset }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CI: 'true'
+    defaults:
+      run:
+        working-directory: ${{ inputs.project-dir }}
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: contract
+        name: Validate benchmark contract
+        env:
+          PROJECT_DIR: ${{ inputs.project-dir }}
+          TARGET: ${{ inputs.target }}
+          PYTHON_VERSION: ${{ inputs.python-version }}
+          PROVIDER: ${{ inputs.provider }}
+          DATASET: ${{ inputs.dataset }}
+          GATEWAY_BASE_URL: ${{ inputs.gateway-base-url }}
+          REPORT_FILE: ${{ inputs.report-file }}
+          ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import os
+          import re
+          
+          root = Path.cwd().resolve()
+          project_dir = os.environ['PROJECT_DIR']
+          target = os.environ['TARGET']
+          py_version = os.environ['PYTHON_VERSION']
+          provider = os.environ['PROVIDER']
+          dataset = os.environ['DATASET']
+          gateway_url = os.environ['GATEWAY_BASE_URL']
+          report_file = os.environ['REPORT_FILE']
+          artifacts_dir = os.environ['ARTIFACTS_DIR']
+          
+          assert project_dir == '.' or (
+              bool(re.fullmatch(r'[A-Za-z0-9_./-]+', project_dir))
+              and not project_dir.startswith('/')
+              and '..' not in Path(project_dir).parts
+          ), f'Invalid project-dir: {project_dir}'
+          assert bool(re.fullmatch(r'ci-[A-Za-z0-9_][A-Za-z0-9_.-]*', target)) and target != 'ci-install', (
+              f'Benchmark target must start with ci- and not be ci-install: {target}'
+          )
+          assert bool(re.fullmatch(r'3\.\d+', py_version)), f'Invalid python-version: {py_version}'
+          assert provider in {'litellm', 'openai', 'gemini'}, f'Unsupported provider: {provider}'
+          assert bool(re.fullmatch(r'[A-Za-z0-9_.-]+', dataset)), f'Invalid dataset identifier: {dataset}'
+          if gateway_url:
+              assert bool(re.fullmatch(r'https?://[^\s\r\n]+', gateway_url)), 'gateway-base-url must be an HTTP(S) URL'
+          for rel in (report_file, artifacts_dir):
+              assert (
+                  bool(re.fullmatch(r'[A-Za-z0-9_./-]+', rel))
+                  and not rel.startswith('/')
+                  and '..' not in Path(rel).parts
+                  and (root / rel).resolve().is_relative_to(root)
+              ), f'Artifact path escapes project directory: {rel}'
+          makefile = root / 'Makefile'
+          assert makefile.is_file() and not makefile.is_symlink(), 'Missing Makefile in project-dir'
+          content = makefile.read_text()
+          for required in ('ci-install', target):
+              assert bool(re.search(rf'(?m)^{re.escape(required)}\s*:', content)), (
+                  f'Makefile must define {required}'
+              )
+          slug = re.sub(r'[^A-Za-z0-9._-]+', '-', f'{project_dir}-{provider}-{dataset}').strip('-.') or 'benchmark'
+          suffix = hashlib.sha256(f'{project_dir}:{provider}:{dataset}'.encode()).hexdigest()[:10]
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'artifact-name={slug[:80]}-{suffix}\n')
+          PY
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: true
+      - name: Install project tooling
+        run: make -- ci-install
+      - name: Run ML benchmark suite
+        env:
+          TARGET: ${{ inputs.target }}
+          LLM_PROVIDER: ${{ inputs.provider }}
+          BENCHMARK_DATASET: ${{ inputs.dataset }}
+          LLM_GATEWAY_BASE_URL: ${{ inputs.gateway-base-url }}
+          LLM_GATEWAY_API_KEY: ${{ secrets.llm-gateway-api-key }}
+          AI_EVAL_API_KEY: ${{ secrets.llm-gateway-api-key }}
+        run: make -- "$TARGET"
+      - name: Publish benchmark report to job summary
+        if: always()
+        env:
+          REPORT_FILE: ${{ inputs.report-file }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          report = Path(os.environ['REPORT_FILE'])
+          summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary_path and report.is_file() and not report.is_symlink():
+              with open(summary_path, 'a', encoding='utf-8') as handle:
+                  handle.write(report.read_text(encoding='utf-8') + '\n')
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ml-benchmark-${{ steps.contract.outputs.artifact-name }}
+          path: |
+            ${{ inputs.project-dir }}/${{ inputs.report-file }}
+            ${{ inputs.project-dir }}/${{ inputs.artifacts-dir }}/
+          if-no-files-found: ignore
+          retention-days: 7

@@ -176,6 +176,7 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 | [project-check.yml](.github/workflows/project-check.yml) | `project-dir`, `target` | Run `ci-install`, then the chosen Make target; optional generated-file drift check |
 | [integration.yml](.github/workflows/integration.yml) | `project-dir` | Healthy PostgreSQL/Redis services, install, migrate, integration tests |
 | [ai-eval.yml](.github/workflows/ai-eval.yml) | `project-dir` | Install Python/Node/uv tooling, run `ci-eval`; optional named provider key |
+| [ml-benchmark.yml](.github/workflows/ml-benchmark.yml) | None | Opt-in ML and LLM-Gateway benchmark evaluation (`ci-benchmark`), provider/dataset matrix support, job summary report, and artifact upload |
 | [security.yml](.github/workflows/security.yml) | None | CodeQL, compiled-language builds, Gitleaks secret scan, optional caller-owned configuration, dependency review on PRs |
 | [workflow-lint.yml](.github/workflows/workflow-lint.yml) | None | Actionlint against the consuming repository's workflows |
 | [publish-docker.yml](.github/workflows/publish-docker.yml) | `image` | Event validation, image build validation, approved GHCR publication, provenance, SBOM and digest output |

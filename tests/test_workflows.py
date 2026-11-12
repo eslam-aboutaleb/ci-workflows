@@ -270,6 +270,36 @@ class RepositoryFixture(unittest.TestCase):
         self.assertEqual(len(result['terraform-projects']), 1)
         self.assertEqual(result['terraform-projects'][0]['terraform_version'], '1.12.2')
 
+    def test_ml_benchmark_contract_validates_provider_and_paths(self):
+        self.write('Makefile', 'ci-install:\nci-benchmark:\n')
+        workflow = load(ROOT / '.github/workflows/ml-benchmark.yml')
+        step = next(s for s in workflow['jobs']['benchmark']['steps'] if s.get('id') == 'contract')
+        program = step['run'].split("<<'PY'\n", 1)[1].rsplit('\nPY', 1)[0]
+        base_env = {
+            **os.environ,
+            'PROJECT_DIR': '.',
+            'TARGET': 'ci-benchmark',
+            'PYTHON_VERSION': '3.11',
+            'PROVIDER': 'openai',
+            'DATASET': 'textoir_banking77',
+            'GATEWAY_BASE_URL': 'https://82.70.210.36.sslip.io/v1',
+            'REPORT_FILE': 'BENCHMARK_REPORT.md',
+            'ARTIFACTS_DIR': 'data/artifacts',
+            'GITHUB_OUTPUT': str(self.output),
+        }
+        result = subprocess.run([sys.executable, '-c', program], cwd=self.repo, env=base_env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('artifact-name=', self.output.read_text())
+        for bad_overrides in [
+            {'PROVIDER': 'unsupported'},
+            {'TARGET': 'ci-install'},
+            {'REPORT_FILE': '../escape.md'},
+            {'GATEWAY_BASE_URL': 'ftp://invalid'},
+        ]:
+            bad_res = subprocess.run([sys.executable, '-c', program], cwd=self.repo, env={**base_env, **bad_overrides}, capture_output=True, text=True)
+            self.assertNotEqual(bad_res.returncode, 0)
+
+
 
 class QualityGateTests(unittest.TestCase):
     def gate(self, overrides=None, outputs=None, trusted=False, event='pull_request'):

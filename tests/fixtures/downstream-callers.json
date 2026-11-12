@@ -78,5 +78,35 @@
       "with": {},
       "secrets": {}
     }
+  ],
+  "eslam-aboutaleb/ticket-classification": [
+    {
+      "workflow": "ci.yml",
+      "with": {},
+      "secrets": {
+        "AI_EVAL_API_KEY": "${{ secrets.AI_EVAL_API_KEY }}",
+        "PYPI_API_TOKEN": "${{ secrets.PYPI_API_TOKEN }}"
+      }
+    },
+    {
+      "workflow": "pr-description.yml",
+      "with": {},
+      "secrets": {}
+    },
+    {
+      "workflow": "ml-benchmark.yml",
+      "with": {
+        "project-dir": ".",
+        "target": "ci-benchmark",
+        "python-version": "3.11",
+        "provider": "openai",
+        "dataset": "textoir_banking77",
+        "report-file": "BENCHMARK_REPORT.md",
+        "artifacts-dir": "data/artifacts"
+      },
+      "secrets": {
+        "llm-gateway-api-key": "${{ secrets.LLM_GATEWAY_API_KEY }}"
+      }
+    }
   ]
 }
