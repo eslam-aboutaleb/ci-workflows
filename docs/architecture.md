@@ -9,6 +9,7 @@ Existing workflow paths and the configuration schema remain stable.
     ci.yml                   Existing aggregate quality pipeline
     commit-messages.yml      Reusable semantic commit-message check
     python.yml, node.yml…    Existing individual quality checks
+    ml-benchmark.yml         Opt-in ML and LLM-Gateway benchmark evaluation and artifacts
     image-verification.yml   Opt-in image inventory, signatures, SBOM and CVE checks
     terraform-plan.yml       Opt-in encrypted remote-state planning
     terraform-apply.yml      Opt-in reviewed-plan application

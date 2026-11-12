@@ -1,0 +1,22 @@
+name: ML benchmark evaluation
+on:
+  schedule:
+    - cron: '30 5 * * 1'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  benchmark:
+    uses: eslam-aboutaleb/ci-workflows/.github/workflows/ml-benchmark.yml@COMMIT_SHA
+    permissions:
+      contents: read
+    with:
+      project-dir: .
+      target: ci-benchmark
+      python-version: '3.11'
+      provider: openai
+      dataset: textoir_banking77
+      report-file: BENCHMARK_REPORT.md
+      artifacts-dir: data/artifacts
+    secrets:
+      llm-gateway-api-key: ${{ secrets.LLM_GATEWAY_API_KEY }}
