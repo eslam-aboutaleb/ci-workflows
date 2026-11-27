@@ -8,6 +8,7 @@ Existing workflow paths and the configuration schema remain stable.
   workflows/                 Stable, flat GitHub Actions entry points
     ci.yml                   Existing aggregate quality pipeline
     commit-messages.yml      Reusable semantic commit-message check
+    author-check.yml         Reusable commit author identity check
     python.yml, node.yml…    Existing individual quality checks
     image-verification.yml   Opt-in image inventory, signatures, SBOM and CVE checks
     terraform-plan.yml       Opt-in encrypted remote-state planning

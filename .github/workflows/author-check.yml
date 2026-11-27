@@ -1,0 +1,191 @@
+name: Commit author identity
+
+on:
+  workflow_call:
+    inputs:
+      extra-patterns:
+        description: Extra case-insensitive regular expressions, one per line, matched against commit author and committer names and emails and Co-authored-by trailers
+        required: false
+        type: string
+        default: ''
+      blocked-email-sha256:
+        description: Comma-separated lowercase SHA-256 hashes of exact email addresses that must not appear on any commit (hashed so the addresses are not published)
+        required: false
+        type: string
+        default: '108dd1da158f52aa3cce0cf68182a41acea66008fd7967697b03694d8376b9fd,3e1958f53fafe90aaf0a79e6f066bd5af0d5336793951c9f44672fa1813b71e9'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Commit author identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Reject AI-agent and blocked identities on every new commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_API_URL: ${{ github.api_url }}
+          GH_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_AFTER: ${{ github.sha }}
+          EXTRA_PATTERNS: ${{ inputs.extra-patterns }}
+          BLOCKED_EMAIL_SHA256: ${{ inputs.blocked-email-sha256 }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          import re
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          # Built-in AI-agent identities. Patterns are specific on purpose so that
+          # real people named Claude, Devin or Gemini are not rejected.
+          DEFAULTS = [
+              r'noreply@anthropic\.com', r'\banthropic\b', r'\bclaude[\s_-]*(code|opus|sonnet|haiku|ai|bot|agent)\b',
+              r'\bclaude\b.*\bnoreply@',
+              r'\bcodex\b', r'\bopenai\b', r'\bchatgpt\b', r'@openai\.com',
+              r'\binstinct\b', r'@instinct\.',
+              r'kilo[\s_-]*code', r'kilocode', r'\bkilo@',
+              r'\bcopilot\b', r'copilot-swe-agent',
+              r'cursoragent', r'@cursor\.(com|sh)', r'\bcursor[\s_-]*agent\b',
+              r'\(aider\)', r'@aider\.chat', r'\baider[\s_-]*(ai|bot)\b',
+              r'\bgemini[\s_-]*(cli|code[\s_-]*assist|bot|agent)\b', r'google-labs-jules', r'\bjules\b.*\[bot\]',
+              r'devin-ai', r'\bdevin[\s_-]*ai\b', r'@cognition\.ai',
+              r'\bwindsurf\b', r'\bcodeium\b',
+              r'\bcline\b.*\bbot\b', r'\bopencode\b', r'\bqodo\b', r'\bamazon[\s_-]*q\b',
+              r'\bagent@local\b', r'\bai[\s_-]*(assistant|agent)\b',
+          ]
+          SHA = re.compile(r'^[0-9a-f]{40}$')
+          TRAILER = re.compile(r'(?im)^\s*co-authored-by:\s*(.+?)\s*$')
+          EMAIL = re.compile(r'<([^>]*)>')
+
+          def require(condition, message):
+              if not condition:
+                  print(f'::error::{message}')
+                  raise SystemExit(1)
+
+          def api(path):
+              request = Request(
+                  f"{os.environ['GH_API_URL'].rstrip('/')}/repos/{os.environ['GH_REPOSITORY']}/{path}",
+                  headers={
+                      'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                      'Accept': 'application/vnd.github+json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  },
+              )
+              with urlopen(request, timeout=20) as response:
+                  return json.load(response)
+
+          def pull_request_commits():
+              number = os.environ['PR_NUMBER']
+              require(number.isdecimal(), 'Missing pull request number')
+              total = api(f'pulls/{number}').get('commits')
+              require(type(total) is int and 0 < total <= 250,
+                      'Pull request has no commits or exceeds the API limit of 250; split the PR')
+              commits = []
+              for page in range(1, (total + 99) // 100 + 1):
+                  result = api(f'pulls/{number}/commits?per_page=100&page={page}')
+                  require(isinstance(result, list), 'Unexpected PR commit API response')
+                  commits.extend(result)
+              require(len(commits) == total, 'Pull request commit listing is incomplete')
+              return commits
+
+          def pushed_commits():
+              before = os.environ['PUSH_BEFORE'].lower()
+              after = os.environ['PUSH_AFTER'].lower()
+              require(bool(SHA.fullmatch(before) and SHA.fullmatch(after)),
+                      'Missing or invalid push range SHA')
+              if before == '0' * 40:
+                  event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+                  entries = event.get('commits')
+                  require(isinstance(entries, list) and type(event.get('size')) is int
+                          and len(entries) == event['size'],
+                          'Initial push commit payload is incomplete; cannot enforce the policy')
+                  return [
+                      {'sha': entry['id'], 'commit': {
+                          'message': entry['message'],
+                          'author': entry.get('author', {}),
+                          'committer': entry.get('committer', {}),
+                      }}
+                      for entry in entries
+                  ]
+              first = api(f'compare/{before}...{after}?per_page=100&page=1')
+              total = first.get('total_commits')
+              require(type(total) is int and 0 <= total <= 250,
+                      'Push comparison exceeds the limit of 250 commits; split the push')
+              commits = list(first.get('commits', []))
+              for page in range(2, (total + 99) // 100 + 1):
+                  commits.extend(api(f'compare/{before}...{after}?per_page=100&page={page}').get('commits', []))
+              require(len(commits) == total, 'Push commit comparison is incomplete')
+              return commits
+
+          def compile_patterns():
+              patterns = list(DEFAULTS)
+              for line in os.environ.get('EXTRA_PATTERNS', '').splitlines():
+                  line = line.strip()
+                  if line and not line.startswith('#'):
+                      patterns.append(line)
+              compiled = []
+              for pattern in patterns:
+                  try:
+                      compiled.append((pattern, re.compile(pattern, re.IGNORECASE)))
+                  except re.error as error:
+                      require(False, f'Invalid extra pattern {pattern!r}: {error}')
+              return compiled
+
+          patterns = compile_patterns()
+          hashes = {h.strip().lower() for h in os.environ.get('BLOCKED_EMAIL_SHA256', '').split(',') if h.strip()}
+
+          def identities(item):
+              commit = item.get('commit', {})
+              for role in ('author', 'committer'):
+                  person = commit.get(role) or {}
+                  yield role, person.get('name', '') or '', person.get('email', '') or ''
+              for trailer in TRAILER.findall(commit.get('message', '') or ''):
+                  match = EMAIL.search(trailer)
+                  email = match.group(1) if match else ''
+                  name = EMAIL.sub('', trailer).strip()
+                  yield 'Co-authored-by', name, email
+
+          def problem(name, email):
+              if email.strip().lower() and hashlib.sha256(email.strip().lower().encode()).hexdigest() in hashes:
+                  return 'a blocked personal email address'
+              for pattern, regex in patterns:
+                  if regex.search(name) or regex.search(email) or regex.search(f'{name} <{email}>'):
+                      return f'blocked pattern {pattern}'
+              return None
+
+          event = os.environ['EVENT_NAME']
+          if event == 'pull_request':
+              commits = pull_request_commits()
+          elif event == 'push':
+              commits = pushed_commits()
+          else:
+              print(f'No authored commits to validate for {event}')
+              commits = []
+
+          failures = []
+          for item in commits:
+              for role, name, email in identities(item):
+                  reason = problem(name, email)
+                  if reason:
+                      sha = item['sha'][:12]
+                      shown = name.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      failures.append(sha)
+                      print(f"::error::{sha}: {role} '{shown}' matches {reason}")
+          if failures:
+              print('Commits must be authored by a real contributor identity.')
+              print('Fix: set git user.name/user.email (use the GitHub noreply address),')
+              print('then rewrite the offending commits and remove Co-authored-by trailers for AI agents.')
+              raise SystemExit(1)
+          print(f'Validated {len(commits)} commits ({event}); no blocked identities')
+          PY
