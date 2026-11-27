@@ -163,6 +163,7 @@ Every shared workflow is callable individually through `workflow_call`. Callers 
 | --- | --- | --- |
 | [ci.yml](.github/workflows/ci.yml) | None | Discovery, selected checks, summaries, stable final gate, commit-message check |
 | [commit-messages.yml](.github/workflows/commit-messages.yml) | None | Check semantic subjects on PR commits and direct pushes; skip unrelated event types |
+| [author-check.yml](.github/workflows/author-check.yml) | None | Fail PRs and pushes whose commit author, committer or Co-authored-by trailer matches an AI-agent identity or a hashed blocked email; optional `extra-patterns` |
 | [python.yml](.github/workflows/python.yml) | `project-dir`, `manager` (`uv`/`pip`) | Ruff lint/format, pytest on each Python/OS combination, optional coverage threshold and distributions; JUnit/coverage artifacts |
 | [node.yml](.github/workflows/node.yml) | `project-dir`, `manager` (`npm`/`pnpm`/`bun`) | Frozen install, dependency audit, mandatory lint/typecheck/test/build; optional OS and shard matrices; available test/coverage artifacts |
 | [browser.yml](.github/workflows/browser.yml) | `project-dir`, `manager` | Locked Playwright install, browser or visual script, shards, available reports/traces/screenshots |
@@ -389,3 +390,18 @@ Do not use `pull_request_target` for these checks. Existing runs are not
 retroactively canceled when a base update introduces conflicts. Manual,
 scheduled, release and main-branch runs remain available independently of PR
 mergeability. Resolve conflicts and push the resolution to resume PR checks.
+
+### Commit author identity check
+
+`author-check.yml` rejects any new commit whose author or committer name/email, or any `Co-authored-by` trailer, matches a built-in list of AI-agent identities (Claude/Anthropic, Codex/OpenAI, Instinct, KiloCode, Copilot, Cursor, Aider, Gemini CLI, Devin, Windsurf and similar) or an email whose SHA-256 is listed in `blocked-email-sha256`. The default hashes cover the owner's personal addresses without publishing them. Real contributors, `dependabot[bot]`, `github-actions[bot]` and GitHub's web-flow committer pass. Add repository-specific patterns with `extra-patterns` (one case-insensitive regex per line).
+
+```yaml
+  author-check:
+    name: Commit author identity
+    uses: eslam-aboutaleb/ci-workflows/.github/workflows/author-check.yml@COMMIT_SHA
+    permissions:
+      contents: read
+      pull-requests: read
+```
+
+The calling workflow must run on `pull_request`. Require the emitted check (for example `author-check / Commit author identity`) in the ruleset. The workflow only reads commit metadata through the API; it checks out nothing and uses no secrets.
